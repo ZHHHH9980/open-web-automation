@@ -1,6 +1,6 @@
 # Web Automation Executor
 
-基于 Playwright CDP 的网页自动化执行器，接管你已经登录的 Chrome。
+基于 Playwright CDP 的网页自动化执行器，核心目标是“自然语言指令 + 复用登录态 + 可人工接管”。
 
 ## 1) 安装
 
