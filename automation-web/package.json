@@ -1,0 +1,14 @@
+{
+  "name": "open-autoglm-web-automation",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Web automation executor for Google/Zhihu/Xiaohongshu via Playwright CDP",
+  "main": "run-web-task.js",
+  "scripts": {
+    "run": "node run-web-task.js",
+    "test:parser": "node test-parser.js"
+  },
+  "dependencies": {
+    "playwright": "^1.52.0"
+  }
+}
