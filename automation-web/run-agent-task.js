@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
-const { runWebTask } = require("./automation-web/engine");
+"use strict";
+
+const { runAgentTask } = require("./llm-agent");
 
 function writeJsonLine(obj) {
   return new Promise((resolve, reject) => {
@@ -14,20 +16,19 @@ function writeJsonLine(obj) {
 (async () => {
   try {
     const input = process.argv.slice(2).join(" ");
-    const result = await runWebTask(input);
+    const result = await runAgentTask(input);
     await writeJsonLine(result);
     process.exitCode = result.exit_code || (result.success ? 0 : 1);
   } catch (err) {
-    const out = {
+    await writeJsonLine({
       success: false,
-      message: `执行异常: ${err.message}`,
+      message: `agent runtime exception: ${err.message || err}`,
       has_screenshot: false,
       screenshot: "",
       exit_code: 1,
       timestamp: new Date().toISOString(),
-      meta: { error: String(err) },
-    };
-    await writeJsonLine(out);
+      meta: { error: String(err), requires_human: false },
+    });
     process.exitCode = 1;
   }
 })();

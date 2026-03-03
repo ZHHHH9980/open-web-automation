@@ -39,9 +39,10 @@ async function makeScreenshot(page, label) {
     return { filePath: "", base64: "" };
   }
   const dir = ensureScreenshotDir();
-  const fileName = `${Date.now()}-${label}.png`;
+  const fileName = `${Date.now()}-${label}.jpg`;
   const filePath = path.join(dir, fileName);
-  await page.screenshot({ path: filePath, fullPage: true });
+  // Use JPEG with low quality for vision model (viewport only, not fullPage)
+  await page.screenshot({ path: filePath, fullPage: false, type: 'jpeg', quality: 20 });
   const b64 = fs.readFileSync(filePath).toString("base64");
   return { filePath, base64: b64 };
 }
@@ -67,6 +68,7 @@ async function connectBrowser(cdpUrl) {
 }
 
 const AUTO_TAB_NAME = "__OPEN_WEB_AUTOMATION__";
+const HUMAN_TAB_PREFIX = "__OPEN_WEB_AUTOMATION_HUMAN__";
 
 function isManagedUrl(url) {
   const u = String(url || "");
@@ -99,6 +101,20 @@ async function tagAutomationPage(page) {
   }
 }
 
+function isHumanLockedName(name) {
+  return String(name || "").startsWith(HUMAN_TAB_PREFIX);
+}
+
+async function markHumanPauseTab(page) {
+  try {
+    await page.evaluate((name) => {
+      window.name = name;
+    }, `${HUMAN_TAB_PREFIX}${Date.now()}`);
+  } catch (_err) {
+    // ignore
+  }
+}
+
 async function closePagesSafe(pages) {
   for (const p of pages) {
     try {
@@ -126,7 +142,7 @@ async function getAutomationPage(context) {
   }
 
   const owned = infos.filter((i) => i.name === AUTO_TAB_NAME);
-  const managed = infos.filter((i) => isManagedUrl(i.url));
+  const managed = infos.filter((i) => isManagedUrl(i.url) && !isHumanLockedName(i.name));
   const keepInfo = owned[owned.length - 1] || managed[managed.length - 1] || null;
 
   if (keepInfo) {
@@ -151,6 +167,7 @@ async function getAutomationPage(context) {
 
   const stale = infos
     .filter((i) => {
+      if (isHumanLockedName(i.name)) return false;
       if (keepInfo && i.page === keepInfo.page) return false;
       const u = i.url || "";
       return u.startsWith("about:blank") || u.startsWith("chrome://newtab") || u.startsWith("chrome-error://");
@@ -176,4 +193,5 @@ module.exports = {
   sameName,
   connectBrowser,
   getAutomationPage,
+  markHumanPauseTab,
 };
