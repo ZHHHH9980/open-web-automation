@@ -1,67 +1,62 @@
-# Web Automation Executor
+# Automation Web
 
-基于 Playwright CDP 的网页自动化执行器，核心目标是“自然语言指令 + 复用登录态 + 可人工接管”。
+核心执行层：Playwright + Chrome CDP。
 
-## 1) 安装
+## 执行流
 
-```bash
-cd automation-web
-npm install
+```text
+run-web-task.js / run-unified-task.js
+  -> engine.js
+  -> workflows/{google,zhihu,xiaohongshu}.js
+  -> 统一 JSON result
 ```
 
-## 2) 启动 Chrome 远程调试（复用登录态）
+## 输入协议（JSON）
 
-```bash
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --remote-debugging-port=9222 \
-  --user-data-dir="$HOME/chrome-agent-profile" \
-  --profile-directory="Default"
+统一传入 JSON 对象，例如：
+
+```json
+{"site":"zhihu","action":"latest_answer","creator":"梦中的桃花源"}
 ```
 
-如果你要复用已有账号，请把 `--user-data-dir` 指向你实际在用的目录。
+支持动作：
 
-## 3) 运行任务
+- `google/search`
+- `zhihu/follow_lookup`
+- `zhihu/search`
+- `zhihu/latest_answer`
+- `zhihu/search_top_answer`
+- `zhihu/follow_nth_post`
+- `xiaohongshu/search_notes`
+- `xiaohongshu/publish_note`
 
-```bash
-node run-web-task.js "Google 搜索 OpenAI"
-node run-web-task.js "在知乎查看关注的博主"
-node run-web-task.js "小红书搜索 露营攻略"
-node run-web-task.js "小红书发布笔记 标题:周末露营 内容:今天天气很好 图片:/tmp/a.png,/tmp/b.png"
-```
+## 输出协议
 
-默认发布任务不会点击最终发布按钮（安全模式）。
-
-默认会保留网页标签页，方便人工接管登录/验证码。
-如需自动关闭，设置 `WEB_KEEP_OPEN=0`：
-
-```bash
-WEB_KEEP_OPEN=0 node run-web-task.js "Google 搜索 OpenAI"
-```
-
-- 设置 `WEB_PUBLISH_CONFIRM=1` 才会自动点击发布：
-
-```bash
-WEB_PUBLISH_CONFIRM=1 node run-web-task.js "小红书发布笔记 标题:... 内容:... 图片:... 立即发布"
-```
-
-## 4) 返回格式
-
-统一返回 JSON：
+统一返回：
 
 - `success`
 - `message`
 - `has_screenshot`
-- `screenshot` (Base64)
+- `screenshot` (base64)
 - `exit_code`
 - `timestamp`
-- `meta` (站点、动作、结果、截图路径、是否需要人工接管)
+- `meta`
 
-## 5) 统一入口
+其中 `meta.requires_human=true` 表示触发登录/验证码/风控。
 
-项目统一入口在 `run-unified-task.js`：
+## 稳定性策略
 
-- 识别自然语言任务并执行 Google/知乎/小红书操作
+- 每个任务默认 3 分钟超时（`WEB_TASK_TIMEOUT_MS`）。
+- 人机验证场景显式返回可读错误，不死循环重试。
+- `WEB_KEEP_OPEN=1` 时保留页面，便于人工接管。
+
+## E2E Harness
+
+- `harness/cases.json`：30 个真实 case
+- `harness/run-e2e.js`：批量执行、自动 skip 被风控站点、输出报告
+
+运行：
 
 ```bash
-node /Users/a1/Documents/open-web-automation/run-unified-task.js "Google 搜索 Playwright"
+npm run e2e
 ```
