@@ -6,8 +6,13 @@ const path = require("path");
 const { spawnSync } = require("child_process");
 
 const { connectBrowser, getAutomationPage, grabBodyText, makeScreenshot, markHumanPauseTab } = require("./core/browser");
-const { toResult, looksLikeHumanIntervention } = require("./core/result");
+const { toResult } = require("./core/result");
 const { guessSeedUrl: guessSeedUrlFromLearning } = require("./learning/system");
+
+// 3-phase prompts
+const { runAnalysisPhase } = require("./prompts/analysis");
+const { buildExecutionPrompt } = require("./prompts/execution");
+const { runVerificationPhase } = require("./prompts/verification");
 
 const ROOT = path.resolve(__dirname, "..");
 const ACTION_SCHEMA_PATH = path.join(ROOT, "adapter", "agent-action.schema.json");
@@ -189,7 +194,7 @@ function runCodexPlanner(prompt, model) {
   }
 }
 
-async function runApiPlanner(prompt, model, timeoutMs, screenshotB64) {
+async function runApiPlanner(prompt, model, timeoutMs, screenshotB64, opts = {}) {
   const apiKey = process.env.OWA_AGENT_API_KEY || process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return { ok: false, error: "missing OWA_AGENT_API_KEY/OPENAI_API_KEY for api planner" };
@@ -255,6 +260,12 @@ async function runApiPlanner(prompt, model, timeoutMs, screenshotB64) {
     const data = await resp.json();
     const content = data?.choices?.[0]?.message?.content;
     const contentText = extractMessageText(content);
+
+    // rawMode: return raw text without validation
+    if (opts.rawMode) {
+      return { ok: true, raw: contentText };
+    }
+
     const jsonText = extractJsonObject(contentText);
     if (!jsonText) {
       return { ok: false, error: "api planner returned non-json content" };
@@ -276,7 +287,7 @@ async function runApiPlanner(prompt, model, timeoutMs, screenshotB64) {
   }
 }
 
-async function runClaudePlanner(prompt, model, timeoutMs, screenshotB64) {
+async function runClaudePlanner(prompt, model, timeoutMs, screenshotB64, opts = {}) {
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN;
   if (!apiKey) {
     return { ok: false, error: "missing ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN for claude planner" };
@@ -349,6 +360,11 @@ async function runClaudePlanner(prompt, model, timeoutMs, screenshotB64) {
       return { ok: false, error: "claude planner returned empty content" };
     }
 
+    // rawMode: return raw text without validation
+    if (opts.rawMode) {
+      return { ok: true, raw: content };
+    }
+
     const jsonText = extractJsonObject(content);
     if (!jsonText) {
       return { ok: false, error: "claude planner returned non-json content" };
@@ -370,15 +386,15 @@ async function runClaudePlanner(prompt, model, timeoutMs, screenshotB64) {
   }
 }
 
-async function runPlanner(prompt, model, screenshotB64) {
+async function runPlanner(prompt, model, screenshotB64, opts = {}) {
   const backend = String(process.env.OWA_AGENT_BACKEND || "auto").toLowerCase();
   const timeoutMs = Math.max(5000, toInt(process.env.OWA_AGENT_PLAN_TIMEOUT_MS, 60000));
 
   if (backend === "claude" || backend === "anthropic") {
-    return runClaudePlanner(prompt, model, timeoutMs, screenshotB64);
+    return runClaudePlanner(prompt, model, timeoutMs, screenshotB64, opts);
   }
   if (backend === "api" || backend === "openai") {
-    return runApiPlanner(prompt, model, timeoutMs, screenshotB64);
+    return runApiPlanner(prompt, model, timeoutMs, screenshotB64, opts);
   }
   if (backend === "codex" || backend === "codex-cli") {
     return runCodexPlanner(prompt, model);
@@ -386,13 +402,13 @@ async function runPlanner(prompt, model, screenshotB64) {
 
   const hasClaudeKey = Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
   if (hasClaudeKey) {
-    const claudeRet = await runClaudePlanner(prompt, model, timeoutMs, screenshotB64);
+    const claudeRet = await runClaudePlanner(prompt, model, timeoutMs, screenshotB64, opts);
     if (claudeRet.ok) return claudeRet;
   }
 
   const hasApiKey = Boolean(process.env.OWA_AGENT_API_KEY || process.env.OPENAI_API_KEY);
   if (hasApiKey) {
-    const apiRet = await runApiPlanner(prompt, model, timeoutMs, screenshotB64);
+    const apiRet = await runApiPlanner(prompt, model, timeoutMs, screenshotB64, opts);
     if (apiRet.ok) return apiRet;
     const codexRet = runCodexPlanner(prompt, model);
     if (codexRet.ok) return codexRet;
@@ -572,130 +588,6 @@ async function collectPageState(page, step, candidateLimit) {
   };
 }
 
-function buildPlannerPrompt(task, step, maxSteps, state, history, rules, possibleLoginDetected) {
-  const payload = {
-    task,
-    step,
-    max_steps: maxSteps,
-    current_url: state.url,
-    page_title: state.title,
-    body_text: state.body_text,
-    screenshot_path: state.screenshot_path,
-    candidates: state.candidates,
-    history,
-    recent_corrections: rules,
-  };
-
-  const promptLines = [
-    "You are controlling Playwright through one structured action at a time.",
-    "Goal: finish the user task quickly and safely.",
-    "You must output exactly one JSON object that matches the provided schema.",
-    "",
-  ];
-
-  // 如果检测到可能的登录提示，添加警告
-  if (possibleLoginDetected) {
-    promptLines.push(
-      "⚠️ WARNING: Possible login/verification detected in page text.",
-      "Check the screenshot carefully to confirm if login is actually required.",
-      "If you see a login popup/modal blocking content → use 'fail' immediately.",
-      "If the page is accessible (user already logged in) → proceed normally.",
-      ""
-    );
-  }
-
-  promptLines.push(
-    "CORE PRINCIPLE: Vision-Enabled Automation",
-    "- Primary: Use DOM selectors (candidates) for speed and reliability",
-    "- Fallback: Use screenshot + coordinates when DOM fails",
-    "- You have BOTH tools - choose wisely based on the situation",
-    "",
-    "Rules:",
-    "1) DOM First - Prefer target_id from candidates when available.",
-    "",
-    "2) Vision Fallback - When DOM is not enough:",
-    "   - Candidates list is empty",
-    "   - Candidates don't have what you need",
-    "   - Element exists in screenshot but not in candidates",
-    "   → Use coordinate-based clicking: {\"action\": \"click\", \"x\": 500, \"y\": 300}",
-    "   → Trust the screenshot - it shows EXACTLY what's on the page",
-    "",
-    "3) Decision Priority - When you can't find what you need:",
-    "   Priority 1: Check screenshot carefully - can you see the target?",
-    "   Priority 2: If visible in screenshot → use coordinates to click",
-    "   Priority 3: If not visible → use 'wait' to let page load",
-    "   Priority 4: If still not visible after wait → scroll to find it",
-    "   Priority 5: If truly impossible → use 'fail'",
-    "   ",
-    "   CRITICAL: Do NOT scroll before checking screenshot!",
-    "   Scrolling loses content - use vision first!",
-    "",
-    "4) Login/Auth Detection - PAUSE for human:",
-    "   BEFORE any action, check screenshot for login/auth blockers:",
-    "   ",
-    "   Step 1: Look at screenshot - is there a login popup/modal/dialog?",
-    "   Step 2: If YES → Use 'pause' action immediately",
-    "           - reason: describe what login method is shown (QR code, password, etc.)",
-    "           - result: 'Login required - paused for human intervention'",
-    "   Step 3: If NO login blocker → proceed with task normally",
-    "   ",
-    "   IMPORTANT: Do NOT try to close login popups or bypass them!",
-    "   Just pause and let human handle login.",
-    "",
-    "5) Page Navigation Success - Judge by CONTENT, not URL:",
-    "   After clicking a link (e.g., product, article):",
-    "   ",
-    "   ✅ SUCCESS indicators (check screenshot + body_text):",
-    "   - Page content changed (different from previous step)",
-    "   - Target information visible (e.g., product details, price, description)",
-    "   - Page title changed to match target",
-    "   ",
-    "   ❌ FAILURE indicators:",
-    "   - Content identical to previous step",
-    "   - Error message visible",
-    "   - Still showing list/search results",
-    "   ",
-    "   IMPORTANT: URL may NOT change in SPA (Single Page Apps)!",
-    "   Don't rely on URL alone - check page CONTENT in screenshot.",
-    "   ",
-    "   Example: Clicking product on e-commerce site:",
-    "   - If screenshot shows product details → SUCCESS, use 'done'",
-    "   - If screenshot still shows product list → need to wait or retry",
-    "",
-    "6) Natural interaction flow:",
-    "   - After typing in search box → press Enter",
-    "   - After pressing Enter → system auto-waits for page load",
-    "   - After clicking link → system auto-waits for navigation",
-    "   - You DON'T need manual 'wait' after click/press in most cases",
-    "",
-    "7) Multi-step tasks:",
-    "   - Parse the task to identify ALL required steps",
-    "   - Track progress in your reason field",
-    "   - Only return 'done' when ALL steps are completed",
-    "   - In result field, summarize what you accomplished",
-    "",
-    "8) When to use 'pause' vs 'fail':",
-    "   - Use 'pause': Login/auth required (human can handle)",
-    "   - Use 'fail': Technical errors, page not found, truly impossible",
-    "",
-    "9) Use goto only when you need navigation.",
-    "",
-    "10) Search Strategy - Exact query matching:",
-    "   Step 1: Extract the COMPLETE search query from task (all words, all details)",
-    "   Step 2: Before clicking any search suggestion/shortcut:",
-    "           - Does it contain ALL words from my search query?",
-    "           - If NO → find search input box, use 'type' action instead",
-    "   Step 3: After typing → use 'press' action with key='Enter'",
-    "   ",
-    "   Principle: Never lose information. Type manually when shortcuts are incomplete.",
-    "",
-    "State JSON:",
-    JSON.stringify(payload, null, 2)
-  );
-
-  return promptLines.join("\n");
-}
-
 function resolveSelector(decision, state) {
   // 强制只使用 target_id，忽略 Agent 提供的 selector
   // 避免 Agent 从 history 中学到 selector 格式后自己构造错误的 selector
@@ -855,6 +747,7 @@ async function runAgentTask(rawTask, opts = {}) {
   let lastShotPath = "";
   let lastShotB64 = "";
   let lastUrl = ""; // 跟踪最后访问的 URL
+  let agentPlan = null; // populated after phase 1 (task analysis)
   const history = [];
   let requiresHuman = false;
 
@@ -928,13 +821,28 @@ async function runAgentTask(rawTask, opts = {}) {
       const rules = loadRecentRules(10);
       logProgress(progress, `planner backend=${String(process.env.OWA_AGENT_BACKEND || "auto").toLowerCase()}`);
 
+      // Phase 1: Task Analysis (first real planning step, after seed navigation)
+      if (agentPlan === null) {
+        logProgress(progress, `phase 1: task analysis`);
+        const analysisRet = await runAnalysisPhase(task, state, model, runPlanner, extractJsonObject);
+        if (analysisRet.ok) {
+          agentPlan = analysisRet.plan;
+          logProgress(progress, `plan: filters=${JSON.stringify(agentPlan.hard_filters)} steps=${agentPlan.steps.length}`);
+        } else {
+          logProgress(progress, `analysis phase failed (${analysisRet.error}), using default prompt`);
+          agentPlan = { hard_filters: [], preferences: [], steps: [task], target_site: "" };
+        }
+      }
+
       // Use vision for Claude backend, but reduce history to save context
       const backend = String(process.env.OWA_AGENT_BACKEND || "auto").toLowerCase();
       const useVision = backend === "claude" || backend === "anthropic" || backend === "auto";
 
       // When using vision, reduce history to save context space
       const historyForPrompt = useVision ? history.slice(-3) : history.slice(-8);
-      const prompt = buildPlannerPrompt(task, step, maxSteps, state, historyForPrompt, rules, false);
+
+      // Phase 2: Execution prompt (replaces buildPlannerPrompt)
+      const prompt = buildExecutionPrompt(task, step, maxSteps, state, historyForPrompt, rules, agentPlan);
 
       const screenshot = useVision ? state.screenshot_b64 : "";
 
@@ -984,6 +892,19 @@ async function runAgentTask(rawTask, opts = {}) {
           if (execRet.requiresHuman) {
             requiresHuman = true;
           }
+
+          // Phase 3: Verification (only for successful done, not fail/pause)
+          if (execRet.success && agentPlan) {
+            logProgress(progress, `phase 3: verifying task completion`);
+            const verifyRet = await runVerificationPhase(task, agentPlan, state, history, model, runPlanner, extractJsonObject);
+            if (!verifyRet.verified) {
+              logProgress(progress, `verification failed: ${verifyRet.reason} — continuing execution`);
+              history.push({ step, action: "verify_failed", reason: verifyRet.reason, url: state.url });
+              await page.waitForTimeout(300);
+              continue;
+            }
+          }
+
           const finalShot = await makeScreenshot(page, `agent-final-${step}`);
           lastShotPath = finalShot.filePath;
           lastShotB64 = finalShot.base64;
