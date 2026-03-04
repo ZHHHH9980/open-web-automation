@@ -7,6 +7,7 @@ const { spawnSync } = require("child_process");
 
 const { connectBrowser, getAutomationPage, grabBodyText, makeScreenshot, markHumanPauseTab } = require("./core/browser");
 const { toResult, looksLikeHumanIntervention } = require("./core/result");
+const { guessSeedUrl: guessSeedUrlFromLearning } = require("./learning/system");
 
 const ROOT = path.resolve(__dirname, "..");
 const ACTION_SCHEMA_PATH = path.join(ROOT, "adapter", "agent-action.schema.json");
@@ -28,15 +29,8 @@ function logProgress(enabled, msg) {
 }
 
 function guessSeedUrl(task) {
-  const text = String(task || "").trim();
-  const urlMatch = text.match(/https?:\/\/\S+/i);
-  if (urlMatch) return urlMatch[0];
-  if (/知乎|zhihu/i.test(text)) return "https://www.zhihu.com/";
-  if (/小红书|xhs|rednote/i.test(text)) return "https://www.xiaohongshu.com/";
-  if (/闲鱼|xianyu|goofish/i.test(text)) return "https://www.goofish.com/";
-  if (/淘宝|taobao/i.test(text)) return "https://www.taobao.com/";
-  if (/拼多多|pinduoduo/i.test(text)) return "https://www.pinduoduo.com/";
-  return "https://www.google.com/";
+  // 使用学习系统（包含 Google 搜索 fallback）
+  return guessSeedUrlFromLearning(task);
 }
 
 function ensureRulesStore() {
@@ -83,7 +77,7 @@ function extractJsonObject(s) {
 function validateDecision(obj) {
   if (!obj || typeof obj !== "object") return null;
   const action = String(obj.action || "").toLowerCase();
-  const allowed = new Set(["goto", "click", "type", "press", "scroll", "wait", "done", "fail"]);
+  const allowed = new Set(["goto", "click", "type", "press", "scroll", "wait", "done", "fail", "pause"]);
   if (!allowed.has(action)) return null;
   const reason = normalizeText(obj.reason || "planner_decision");
 
@@ -127,6 +121,8 @@ function extractMessageText(content) {
 }
 
 function runCodexPlanner(prompt, model) {
+  process.stderr.write(`[agent] using Codex backend, model=${model || "default"}\n`);
+
   const outPath = path.join(os.tmpdir(), `owa-agent-${Date.now()}-${Math.random().toString(16).slice(2)}.json`);
   const useOutputSchema = process.env.OWA_AGENT_CODEX_OUTPUT_SCHEMA === "1";
   if (useOutputSchema && !fs.existsSync(ACTION_SCHEMA_PATH)) {
@@ -193,7 +189,7 @@ function runCodexPlanner(prompt, model) {
   }
 }
 
-async function runApiPlanner(prompt, model, timeoutMs) {
+async function runApiPlanner(prompt, model, timeoutMs, screenshotB64) {
   const apiKey = process.env.OWA_AGENT_API_KEY || process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return { ok: false, error: "missing OWA_AGENT_API_KEY/OPENAI_API_KEY for api planner" };
@@ -204,19 +200,37 @@ async function runApiPlanner(prompt, model, timeoutMs) {
   ).replace(/\/$/, "");
   const plannerModel = model || process.env.OWA_AGENT_MODEL || process.env.OWA_PLANNER_MODEL || "gpt-4o-mini";
 
+  process.stderr.write(`[agent] using OpenAI backend, model=${plannerModel}, has_screenshot=${Boolean(screenshotB64)}\n`);
+
   const system = [
     "You output one JSON object only.",
     "No markdown, no extra text.",
-    "JSON must match this action enum exactly: goto, click, type, press, scroll, wait, done, fail.",
+    "JSON must match this action enum exactly: goto, click, type, press, scroll, wait, done, fail, pause.",
     "Always include reason.",
+    "You can see a screenshot of the current page. Use it to identify clickable elements.",
   ].join("\n");
+
+  // Build message content with screenshot if available (OpenAI vision format)
+  const userContent = [];
+  if (screenshotB64) {
+    userContent.push({
+      type: "image_url",
+      image_url: {
+        url: `data:image/jpeg;base64,${screenshotB64}`,
+      },
+    });
+  }
+  userContent.push({
+    type: "text",
+    text: prompt,
+  });
 
   const body = {
     model: plannerModel,
     temperature: 0,
     messages: [
       { role: "system", content: system },
-      { role: "user", content: prompt },
+      { role: "user", content: userContent },
     ],
   };
 
@@ -273,10 +287,12 @@ async function runClaudePlanner(prompt, model, timeoutMs, screenshotB64) {
   ).replace(/\/$/, "");
   const plannerModel = model || process.env.OWA_AGENT_MODEL || "claude-sonnet-4-6";
 
+  process.stderr.write(`[agent] using Claude backend, model=${plannerModel}, has_screenshot=${Boolean(screenshotB64)}\n`);
+
   const system = [
     "You output one JSON object only.",
     "No markdown, no extra text.",
-    "JSON must match this action enum exactly: goto, click, type, press, scroll, wait, done, fail.",
+    "JSON must match this action enum exactly: goto, click, type, press, scroll, wait, done, fail, pause.",
     "Always include reason.",
     "You can see a screenshot of the current page. Use it to identify clickable elements.",
   ].join("\n");
@@ -288,7 +304,7 @@ async function runClaudePlanner(prompt, model, timeoutMs, screenshotB64) {
       type: "image",
       source: {
         type: "base64",
-        media_type: "image/png",
+        media_type: "image/jpeg",  // 修正：截图是 JPEG 格式
         data: screenshotB64,
       },
     });
@@ -362,7 +378,7 @@ async function runPlanner(prompt, model, screenshotB64) {
     return runClaudePlanner(prompt, model, timeoutMs, screenshotB64);
   }
   if (backend === "api" || backend === "openai") {
-    return runApiPlanner(prompt, model, timeoutMs);
+    return runApiPlanner(prompt, model, timeoutMs, screenshotB64);
   }
   if (backend === "codex" || backend === "codex-cli") {
     return runCodexPlanner(prompt, model);
@@ -376,7 +392,7 @@ async function runPlanner(prompt, model, screenshotB64) {
 
   const hasApiKey = Boolean(process.env.OWA_AGENT_API_KEY || process.env.OPENAI_API_KEY);
   if (hasApiKey) {
-    const apiRet = await runApiPlanner(prompt, model, timeoutMs);
+    const apiRet = await runApiPlanner(prompt, model, timeoutMs, screenshotB64);
     if (apiRet.ok) return apiRet;
     const codexRet = runCodexPlanner(prompt, model);
     if (codexRet.ok) return codexRet;
@@ -519,10 +535,17 @@ async function collectCandidates(page, limit) {
 }
 
 async function collectPageState(page, step, candidateLimit) {
+  // Wait for page to be stable after navigation
+  try {
+    await page.waitForLoadState("domcontentloaded", { timeout: 5000 });
+  } catch (_err) {
+    // ignore timeout, continue anyway
+  }
+
   const url = page.url();
-  const title = await page.title();
-  const text = await grabBodyText(page, 2000);
-  const candidates = await collectCandidates(page, candidateLimit);
+  const title = await page.title().catch(() => "");
+  const text = await grabBodyText(page, 2000).catch(() => "");
+  const candidates = await collectCandidates(page, candidateLimit).catch(() => []);
   const label = `agent-step-${step}`;
   const shot = await makeScreenshot(page, label);
 
@@ -537,7 +560,7 @@ async function collectPageState(page, step, candidateLimit) {
   };
 }
 
-function buildPlannerPrompt(task, step, maxSteps, state, history, rules) {
+function buildPlannerPrompt(task, step, maxSteps, state, history, rules, possibleLoginDetected) {
   const payload = {
     task,
     step,
@@ -551,40 +574,93 @@ function buildPlannerPrompt(task, step, maxSteps, state, history, rules) {
     recent_corrections: rules,
   };
 
-  return [
+  const promptLines = [
     "You are controlling Playwright through one structured action at a time.",
     "Goal: finish the user task quickly and safely.",
     "You must output exactly one JSON object that matches the provided schema.",
+    "",
+  ];
+
+  // 如果检测到可能的登录提示，添加警告
+  if (possibleLoginDetected) {
+    promptLines.push(
+      "⚠️ WARNING: Possible login/verification detected in page text.",
+      "Check the screenshot carefully to confirm if login is actually required.",
+      "If you see a login popup/modal blocking content → use 'fail' immediately.",
+      "If the page is accessible (user already logged in) → proceed normally.",
+      ""
+    );
+  }
+
+  promptLines.push(
+    "CORE PRINCIPLE: Vision-Enabled Automation",
+    "- Primary: Use DOM selectors (candidates) for speed and reliability",
+    "- Fallback: Use screenshot + coordinates when DOM fails",
+    "- You have BOTH tools - choose wisely based on the situation",
+    "",
     "Rules:",
-    "1) Prefer target_id from candidates when possible.",
-    "2) FALLBACK: If no suitable candidate exists, use coordinate-based clicking.",
-    "   For 'click' action, provide {x: number, y: number} coordinates based on the screenshot.",
-    "   Example: {\"action\": \"click\", \"x\": 500, \"y\": 300, \"reason\": \"clicking article card at coordinates\"}",
-    "   Use coordinates directly if you CAN see the target in the screenshot but it's not in candidates list.",
-    "3) IMPORTANT: Follow the natural flow of user interactions:",
-    "   - After typing in a search box, press Enter to execute the search",
-    "   - After pressing Enter, use 'wait' action (1-2 seconds) to let the page load",
-    "   - Then check the screenshot and click on the desired result",
-    "   - Do NOT skip steps or click autocomplete suggestions instead of pressing Enter",
-    "4) When you arrive at a new page (after navigation, search, etc.):",
-    "   - If the page just loaded and content might still be rendering, use 'wait' action first",
-    "   - Then check the screenshot for your target",
-    "   - If you can see the target, use coordinate-based clicking immediately",
-    "   - Do NOT scroll unless the target is truly not visible after waiting",
-    "5) Use 'scroll' ONLY as a last resort when:",
-    "   - You have waited for the page to load",
-    "   - You have checked the screenshot carefully",
-    "   - The target is definitely not visible in the current view",
-    "6) Use goto only when you need navigation.",
-    "7) If page asks for captcha/login verification, return fail with clear reason.",
-    "8) When task is completed, return done with concise result.",
-    "9) Never output markdown or extra text.",
-    "10) CRITICAL: When using 'type' action, you MUST extract the exact search keywords from the user's original task.",
-    "    For example, if task is '去小红书搜索 openclaw', you must type 'openclaw', NOT anything else.",
-    "    Always refer back to the 'task' field in the State JSON to get the correct keywords.",
+    "1) DOM First - Prefer target_id from candidates when available.",
+    "",
+    "2) Vision Fallback - When DOM is not enough:",
+    "   - Candidates list is empty",
+    "   - Candidates don't have what you need",
+    "   - Element exists in screenshot but not in candidates",
+    "   → Use coordinate-based clicking: {\"action\": \"click\", \"x\": 500, \"y\": 300}",
+    "   → Trust the screenshot - it shows EXACTLY what's on the page",
+    "",
+    "3) Decision Priority - When you can't find what you need:",
+    "   Priority 1: Check screenshot carefully - can you see the target?",
+    "   Priority 2: If visible in screenshot → use coordinates to click",
+    "   Priority 3: If not visible → use 'wait' to let page load",
+    "   Priority 4: If still not visible after wait → scroll to find it",
+    "   Priority 5: If truly impossible → use 'fail'",
+    "   ",
+    "   CRITICAL: Do NOT scroll before checking screenshot!",
+    "   Scrolling loses content - use vision first!",
+    "",
+    "4) Login/Auth Detection - PAUSE for human:",
+    "   BEFORE any action, check screenshot for login/auth blockers:",
+    "   ",
+    "   Step 1: Look at screenshot - is there a login popup/modal/dialog?",
+    "   Step 2: If YES → Use 'pause' action immediately",
+    "           - reason: describe what login method is shown (QR code, password, etc.)",
+    "           - result: 'Login required - paused for human intervention'",
+    "   Step 3: If NO login blocker → proceed with task normally",
+    "   ",
+    "   IMPORTANT: Do NOT try to close login popups or bypass them!",
+    "   Just pause and let human handle login.",
+    "",
+    "5) Natural interaction flow:",
+    "   - After typing in search box → press Enter",
+    "   - After pressing Enter → wait for page load",
+    "   - Then check screenshot and proceed",
+    "",
+    "6) Multi-step tasks:",
+    "   - Parse the task to identify ALL required steps",
+    "   - Track progress in your reason field",
+    "   - Only return 'done' when ALL steps are completed",
+    "   - In result field, summarize what you accomplished",
+    "",
+    "7) When to use 'pause' vs 'fail':",
+    "   - Use 'pause': Login/auth required (human can handle)",
+    "   - Use 'fail': Technical errors, page not found, truly impossible",
+    "",
+    "8) Use goto only when you need navigation.",
+    "",
+    "9) Search Strategy - Exact query matching:",
+    "   Step 1: Extract the COMPLETE search query from task (all words, all details)",
+    "   Step 2: Before clicking any search suggestion/shortcut:",
+    "           - Does it contain ALL words from my search query?",
+    "           - If NO → find search input box, use 'type' action instead",
+    "   Step 3: After typing → use 'press' action with key='Enter'",
+    "   ",
+    "   Principle: Never lose information. Type manually when shortcuts are incomplete.",
+    "",
     "State JSON:",
-    JSON.stringify(payload, null, 2),
-  ].join("\n");
+    JSON.stringify(payload, null, 2)
+  );
+
+  return promptLines.join("\n");
 }
 
 function resolveSelector(decision, state) {
@@ -679,6 +755,17 @@ async function executeDecision(page, decision, state) {
     };
   }
 
+  if (action === "pause") {
+    return {
+      done: true,
+      success: false,
+      requiresHuman: true,
+      result: decision.result || decision.reason || "paused for human intervention",
+      data: decision.data || {},
+      note: "pause",
+    };
+  }
+
   throw new Error(`unsupported action: ${action}`);
 }
 
@@ -689,7 +776,7 @@ async function runAgentTask(rawTask, opts = {}) {
       success: false,
       exit_code: 2,
       message: "task is empty",
-      meta: { requires_human: false },
+      meta: { requires_human: false, url: "" },
     });
   }
 
@@ -698,16 +785,18 @@ async function runAgentTask(rawTask, opts = {}) {
   const candidateLimit = Math.max(20, toInt(process.env.OWA_AGENT_CANDIDATE_LIMIT, 30));
   const model = process.env.OWA_AGENT_CODEX_MODEL || "";
   const keepOpenOnHuman = process.env.WEB_KEEP_OPEN_ON_HUMAN !== "0";
-  const keepOpen = process.env.WEB_KEEP_OPEN === "1";
+  const keepOpen = opts.debugMode || process.env.WEB_KEEP_OPEN === "1";
   const debug = process.env.OWA_AGENT_DEBUG === "1";
   const progress = process.env.OWA_AGENT_PROGRESS !== "0";
   const timeoutMs = Math.max(1000, toInt(process.env.WEB_TASK_TIMEOUT_MS, 180000));
+  const includeScreenshot = process.env.OWA_AGENT_INCLUDE_SCREENSHOT === "1"; // 默认不返回 base64 截图，只返回路径
   const startedAt = Date.now();
 
   let browser;
   let page;
   let lastShotPath = "";
   let lastShotB64 = "";
+  let lastUrl = ""; // 跟踪最后访问的 URL
   const history = [];
   let requiresHuman = false;
 
@@ -730,6 +819,7 @@ async function runAgentTask(rawTask, opts = {}) {
             task,
             steps: history,
             screenshot_path: lastShotPath,
+            url: lastUrl,
           },
         });
       }
@@ -737,7 +827,29 @@ async function runAgentTask(rawTask, opts = {}) {
       const state = await collectPageState(page, step, candidateLimit);
       lastShotPath = state.screenshot_path || lastShotPath;
       lastShotB64 = state.screenshot_b64 || lastShotB64;
+      lastUrl = state.url || lastUrl; // 更新最后的 URL
       logProgress(progress, `step ${step}/${maxSteps} url=${state.url || "about:blank"} planning...`);
+
+      // 清理浏览器状态：如果不是 about:blank 且是第一步，先清理
+      if (step === 1 && !String(state.url || "").startsWith("about:blank")) {
+        logProgress(progress, `cleaning browser state from ${state.url}`);
+        await page.goto("about:blank");
+        await page.waitForTimeout(300);
+
+        // 现在执行 seed navigation
+        const seedUrl = guessSeedUrl(task);
+        logProgress(progress, `seed navigation -> ${seedUrl}`);
+        await page.goto(seedUrl, { waitUntil: "domcontentloaded", timeout: 90000 });
+        history.push({
+          step,
+          action: "goto",
+          reason: "seed_navigation_after_cleanup",
+          note: `cleaned state, then goto ${seedUrl}`,
+          url: "about:blank",
+        });
+        await page.waitForTimeout(600);
+        continue;
+      }
 
       if (step === 1 && String(state.url || "").startsWith("about:blank")) {
         const seedUrl = guessSeedUrl(task);
@@ -754,38 +866,24 @@ async function runAgentTask(rawTask, opts = {}) {
         continue;
       }
 
-      if (looksLikeHumanIntervention(state.body_text, state.url)) {
-        const msg = "human verification/login detected";
-        requiresHuman = true;
-        return toResult({
-          success: false,
-          exit_code: 10,
-          screenshot: lastShotB64,
-          message: msg,
-          meta: {
-            requires_human: true,
-            task,
-            step,
-            cdpUrl,
-            url: state.url,
-            screenshot_path: lastShotPath,
-          },
-        });
-      }
-
+      // 完全移除关键词检测，让 LLM 通过截图判断
       const rules = loadRecentRules(10);
-      const prompt = buildPlannerPrompt(task, step, maxSteps, state, history.slice(-8), rules);
+      const prompt = buildPlannerPrompt(task, step, maxSteps, state, history.slice(-8), rules, false);
       logProgress(progress, `planner backend=${String(process.env.OWA_AGENT_BACKEND || "auto").toLowerCase()}`);
 
       // Use vision for Claude backend, but reduce history to save context
       const backend = String(process.env.OWA_AGENT_BACKEND || "auto").toLowerCase();
-      const useVision = backend === "claude" || backend === "anthropic";
+      const useVision = backend === "claude" || backend === "anthropic" || backend === "auto";
 
       // When using vision, reduce history to save context space
       const historyForPrompt = useVision ? history.slice(-3) : history.slice(-8);
-      const promptWithReducedHistory = buildPlannerPrompt(task, step, maxSteps, state, historyForPrompt, rules);
+      const promptWithReducedHistory = buildPlannerPrompt(task, step, maxSteps, state, historyForPrompt, rules, false);
 
       const screenshot = useVision ? state.screenshot_b64 : "";
+
+      if (debug) {
+        process.stderr.write(`[agent] step=${step} screenshot_b64_length=${state.screenshot_b64?.length || 0} screenshot_path=${state.screenshot_path}\n`);
+      }
 
       if (useVision && screenshot) {
         logProgress(progress, `using vision (screenshot size: ${screenshot.length} bytes)`);
@@ -826,25 +924,30 @@ async function runAgentTask(rawTask, opts = {}) {
         });
 
         if (execRet.done) {
+          if (execRet.requiresHuman) {
+            requiresHuman = true;
+          }
           const finalShot = await makeScreenshot(page, `agent-final-${step}`);
-          lastShotPath = finalShot.filePath || lastShotPath;
-          lastShotB64 = finalShot.base64 || lastShotB64;
+          lastShotPath = finalShot.filePath;
+          lastShotB64 = finalShot.base64;
           return toResult({
             success: execRet.success,
-            exit_code: execRet.success ? 0 : 1,
-            screenshot: lastShotB64,
+            exit_code: execRet.success ? 0 : (execRet.requiresHuman ? 2 : 1),
+            screenshot: lastShotB64, // Always return screenshot when paused
             message: execRet.result,
             meta: {
-              requires_human: false,
+              requires_human: execRet.requiresHuman || false,
               task,
               steps: history,
               data: execRet.data || {},
               screenshot_path: lastShotPath,
+              url: lastUrl,
             },
           });
         }
 
-        await page.waitForTimeout(700);
+        // Small buffer to let any triggered actions settle
+        await page.waitForTimeout(300);
       } catch (err) {
         const detail = normalizeText(err.message || err);
         history.push({
@@ -876,6 +979,7 @@ async function runAgentTask(rawTask, opts = {}) {
         task,
         steps: history,
         screenshot_path: lastShotPath,
+        url: lastUrl,
       },
     });
   } catch (err) {
@@ -890,6 +994,7 @@ async function runAgentTask(rawTask, opts = {}) {
         steps: history,
         error: String(err),
         screenshot_path: lastShotPath,
+        url: lastUrl,
       },
     });
   } finally {

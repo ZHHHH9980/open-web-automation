@@ -3,6 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const { isManagedUrl: isManagedUrlFromLearning } = require("../learning/system");
 
 async function safeClickByText(page, textList) {
   for (const text of textList) {
@@ -71,16 +72,8 @@ const AUTO_TAB_NAME = "__OPEN_WEB_AUTOMATION__";
 const HUMAN_TAB_PREFIX = "__OPEN_WEB_AUTOMATION_HUMAN__";
 
 function isManagedUrl(url) {
-  const u = String(url || "");
-  return (
-    u.startsWith("about:blank") ||
-    u.startsWith("chrome://newtab") ||
-    u.startsWith("chrome-error://") ||
-    u.includes("google.com") ||
-    u.includes("zhihu.com") ||
-    u.includes("xiaohongshu.com") ||
-    u.includes("creator.xiaohongshu.com")
-  );
+  // 使用学习系统
+  return isManagedUrlFromLearning(url);
 }
 
 async function readWindowNameSafe(page) {

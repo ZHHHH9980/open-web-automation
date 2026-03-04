@@ -16,9 +16,7 @@ function cleanCreatorName(name) {
 function normalizeSite(site) {
   const x = String(site || "").trim().toLowerCase();
   if (!x) return "";
-  if (x === "google" || x === "谷歌") return "google";
-  if (x === "zhihu" || x === "知乎") return "zhihu";
-  if (x === "xiaohongshu" || x === "xhs" || x === "rednote" || x === "小红书") return "xiaohongshu";
+  // 不做任何转换，直接返回
   return x;
 }
 
