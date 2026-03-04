@@ -760,6 +760,16 @@ async function runAgentTask(rawTask, opts = {}) {
 
     for (let step = 1; step <= maxSteps; step += 1) {
       if (Date.now() - startedAt > timeoutMs) {
+        // 任务超时，截取最终状态的图
+        logProgress(progress, 'task timeout, taking final screenshot...');
+        try {
+          const finalShot = await makeScreenshot(page, 'timeout-final');
+          lastShotPath = finalShot.filePath;
+          lastShotB64 = finalShot.base64;
+        } catch (_err) {
+          // ignore screenshot error
+        }
+
         return toResult({
           success: false,
           exit_code: 124,
@@ -964,6 +974,16 @@ async function runAgentTask(rawTask, opts = {}) {
           url: state.url,
         });
       }
+    }
+
+    // max steps reached, take final screenshot
+    logProgress(progress, 'max steps reached, taking final screenshot...');
+    try {
+      const finalShot = await makeScreenshot(page, 'maxsteps-final');
+      lastShotPath = finalShot.filePath;
+      lastShotB64 = finalShot.base64;
+    } catch (_err) {
+      // ignore screenshot error
     }
 
     return toResult({
