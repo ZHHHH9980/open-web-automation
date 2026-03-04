@@ -545,9 +545,20 @@ async function collectPageState(page, step, candidateLimit) {
   const url = page.url();
   const title = await page.title().catch(() => "");
   const text = await grabBodyText(page, 2000).catch(() => "");
-  const candidates = await collectCandidates(page, candidateLimit).catch(() => []);
+  const candidatesFull = await collectCandidates(page, candidateLimit).catch(() => []);
   const label = `agent-step-${step}`;
   const shot = await makeScreenshot(page, label);
+
+  // 创建精简版 candidates（不含 selector）给 Agent 看
+  // 这样 Agent 只能使用 target_id，避免 selector 冲突
+  const candidatesForAgent = candidatesFull.map(c => ({
+    id: c.id,
+    tag: c.tag,
+    role: c.role,
+    type: c.type,
+    text: c.text,
+    // selector 字段被移除，Agent 看不到
+  }));
 
   return {
     step,
@@ -556,7 +567,8 @@ async function collectPageState(page, step, candidateLimit) {
     body_text: text,
     screenshot_path: shot.filePath || "",
     screenshot_b64: shot.base64 || "",
-    candidates,
+    candidates: candidatesForAgent,  // 给 Agent 的精简版
+    candidatesFull,  // 完整版，用于 resolveSelector
   };
 }
 
@@ -687,7 +699,9 @@ function buildPlannerPrompt(task, step, maxSteps, state, history, rules, possibl
 function resolveSelector(decision, state) {
   if (decision.selector) return decision.selector;
   if (!decision.target_id) return "";
-  const hit = (state.candidates || []).find((x) => Number(x.id) === Number(decision.target_id));
+  // 使用完整版 candidates（包含 selector）
+  const candidates = state.candidatesFull || state.candidates || [];
+  const hit = candidates.find((x) => Number(x.id) === Number(decision.target_id));
   return hit ? hit.selector : "";
 }
 
@@ -704,7 +718,7 @@ async function executeDecision(page, decision, state) {
     if (decision.x != null && decision.y != null) {
       await page.mouse.click(decision.x, decision.y);
       // 点击后等待可能的页面变化（网络请求或 DOM 更新）
-      await page.waitForTimeout(800);
+      await page.waitForTimeout(2000);
       return { done: false, note: `click at (${decision.x}, ${decision.y})` };
     }
 
