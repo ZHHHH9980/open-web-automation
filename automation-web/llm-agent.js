@@ -697,7 +697,8 @@ function buildPlannerPrompt(task, step, maxSteps, state, history, rules, possibl
 }
 
 function resolveSelector(decision, state) {
-  if (decision.selector) return decision.selector;
+  // 强制只使用 target_id，忽略 Agent 提供的 selector
+  // 避免 Agent 从 history 中学到 selector 格式后自己构造错误的 selector
   if (!decision.target_id) return "";
   // 使用完整版 candidates（包含 selector）
   const candidates = state.candidatesFull || state.candidates || [];
@@ -925,7 +926,6 @@ async function runAgentTask(rawTask, opts = {}) {
 
       // 完全移除关键词检测，让 LLM 通过截图判断
       const rules = loadRecentRules(10);
-      const prompt = buildPlannerPrompt(task, step, maxSteps, state, history.slice(-8), rules, false);
       logProgress(progress, `planner backend=${String(process.env.OWA_AGENT_BACKEND || "auto").toLowerCase()}`);
 
       // Use vision for Claude backend, but reduce history to save context
@@ -934,7 +934,7 @@ async function runAgentTask(rawTask, opts = {}) {
 
       // When using vision, reduce history to save context space
       const historyForPrompt = useVision ? history.slice(-3) : history.slice(-8);
-      const promptWithReducedHistory = buildPlannerPrompt(task, step, maxSteps, state, historyForPrompt, rules, false);
+      const prompt = buildPlannerPrompt(task, step, maxSteps, state, historyForPrompt, rules, false);
 
       const screenshot = useVision ? state.screenshot_b64 : "";
 
@@ -946,7 +946,7 @@ async function runAgentTask(rawTask, opts = {}) {
         logProgress(progress, `using vision (screenshot size: ${screenshot.length} bytes)`);
       }
 
-      const planRet = await runPlanner(promptWithReducedHistory, model, screenshot);
+      const planRet = await runPlanner(prompt, model, screenshot);
       if (!planRet.ok) {
         return toResult({
           success: false,
