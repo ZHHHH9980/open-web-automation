@@ -630,24 +630,45 @@ function buildPlannerPrompt(task, step, maxSteps, state, history, rules, possibl
     "   IMPORTANT: Do NOT try to close login popups or bypass them!",
     "   Just pause and let human handle login.",
     "",
-    "5) Natural interaction flow:",
-    "   - After typing in search box → press Enter",
-    "   - After pressing Enter → wait for page load",
-    "   - Then check screenshot and proceed",
+    "5) Page Navigation Success - Judge by CONTENT, not URL:",
+    "   After clicking a link (e.g., product, article):",
+    "   ",
+    "   ✅ SUCCESS indicators (check screenshot + body_text):",
+    "   - Page content changed (different from previous step)",
+    "   - Target information visible (e.g., product details, price, description)",
+    "   - Page title changed to match target",
+    "   ",
+    "   ❌ FAILURE indicators:",
+    "   - Content identical to previous step",
+    "   - Error message visible",
+    "   - Still showing list/search results",
+    "   ",
+    "   IMPORTANT: URL may NOT change in SPA (Single Page Apps)!",
+    "   Don't rely on URL alone - check page CONTENT in screenshot.",
+    "   ",
+    "   Example: Clicking product on e-commerce site:",
+    "   - If screenshot shows product details → SUCCESS, use 'done'",
+    "   - If screenshot still shows product list → need to wait or retry",
     "",
-    "6) Multi-step tasks:",
+    "6) Natural interaction flow:",
+    "   - After typing in search box → press Enter",
+    "   - After pressing Enter → system auto-waits for page load",
+    "   - After clicking link → system auto-waits for navigation",
+    "   - You DON'T need manual 'wait' after click/press in most cases",
+    "",
+    "7) Multi-step tasks:",
     "   - Parse the task to identify ALL required steps",
     "   - Track progress in your reason field",
     "   - Only return 'done' when ALL steps are completed",
     "   - In result field, summarize what you accomplished",
     "",
-    "7) When to use 'pause' vs 'fail':",
+    "8) When to use 'pause' vs 'fail':",
     "   - Use 'pause': Login/auth required (human can handle)",
     "   - Use 'fail': Technical errors, page not found, truly impossible",
     "",
-    "8) Use goto only when you need navigation.",
+    "9) Use goto only when you need navigation.",
     "",
-    "9) Search Strategy - Exact query matching:",
+    "10) Search Strategy - Exact query matching:",
     "   Step 1: Extract the COMPLETE search query from task (all words, all details)",
     "   Step 2: Before clicking any search suggestion/shortcut:",
     "           - Does it contain ALL words from my search query?",
@@ -682,13 +703,35 @@ async function executeDecision(page, decision, state) {
     // Try coordinate-based clicking first (fallback for vision-based detection)
     if (decision.x != null && decision.y != null) {
       await page.mouse.click(decision.x, decision.y);
+      // 点击后等待可能的页面变化（网络请求或 DOM 更新）
+      await page.waitForTimeout(800);
       return { done: false, note: `click at (${decision.x}, ${decision.y})` };
     }
 
     // Otherwise use selector-based clicking
     const selector = resolveSelector(decision, state);
     if (!selector) throw new Error("click requires selector, valid target_id, or coordinates (x, y)");
+
+    // 点击并等待可能的导航或网络活动
+    const currentUrl = page.url();
     await page.locator(selector).first().click({ timeout: 10000 });
+
+    // 智能等待：检测是否有导航或网络活动
+    try {
+      // 等待以下任一条件：
+      // 1. URL 改变（SPA 路由跳转）
+      // 2. 网络空闲（AJAX 加载完成）
+      // 3. 超时 3 秒（避免无限等待）
+      await Promise.race([
+        page.waitForURL((url) => url !== currentUrl, { timeout: 3000 }).catch(() => {}),
+        page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {}),
+        page.waitForTimeout(3000)
+      ]);
+    } catch (_err) {
+      // 如果所有等待都失败，至少等待 800ms 让页面有时间响应
+      await page.waitForTimeout(800);
+    }
+
     return { done: false, note: `click ${selector}` };
   }
 

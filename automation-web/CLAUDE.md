@@ -98,8 +98,7 @@ automation-web/
 │
 ├── core/                  # 基础设施层（~400 行）
 │   ├── browser.js         # Playwright CDP 封装
-│   ├── result.js          # 统一输出协议
-│   └── input.js           # 输入解析
+│   └── result.js          # 统一输出协议
 │
 ├── learning/              # 学习系统（~250 行）
 │   ├── README.md          # 学习系统详细文档
