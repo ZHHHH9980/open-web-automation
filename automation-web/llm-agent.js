@@ -930,10 +930,25 @@ async function runAgentTask(rawTask, opts = {}) {
           const finalShot = await makeScreenshot(page, `agent-final-${step}`);
           lastShotPath = finalShot.filePath;
           lastShotB64 = finalShot.base64;
+
+          // DOM提取模式：获取完整页面数据
+          const extractDom = process.env.OWA_EXTRACT_DOM === "1" || opts.extractDom;
+          let domData = {};
+
+          if (extractDom) {
+            logProgress(progress, "extracting DOM data");
+            try {
+              const fullText = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
+              domData = { fullText: fullText.slice(0, 10000) };
+            } catch (err) {
+              // ignore
+            }
+          }
+
           return toResult({
             success: execRet.success,
             exit_code: execRet.success ? 0 : (execRet.requiresHuman ? 2 : 1),
-            screenshot: lastShotB64, // Always return screenshot when paused
+            screenshot: lastShotB64,
             message: execRet.result,
             meta: {
               requires_human: execRet.requiresHuman || false,
@@ -942,6 +957,7 @@ async function runAgentTask(rawTask, opts = {}) {
               data: execRet.data || {},
               screenshot_path: lastShotPath,
               url: lastUrl,
+              dom_data: extractDom ? domData : undefined,
             },
           });
         }
