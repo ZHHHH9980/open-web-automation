@@ -931,6 +931,9 @@ async function runAgentTask(rawTask, opts = {}) {
           lastShotPath = finalShot.filePath;
           lastShotB64 = finalShot.base64;
 
+          // 获取最终的实际 URL（而不是 step 开始时的 URL）
+          const finalUrl = page.url();
+
           // DOM提取模式：获取完整页面数据
           const extractDom = process.env.OWA_EXTRACT_DOM === "1" || opts.extractDom;
           let domData = {};
@@ -956,7 +959,7 @@ async function runAgentTask(rawTask, opts = {}) {
               steps: history,
               data: execRet.data || {},
               screenshot_path: lastShotPath,
-              url: lastUrl,
+              url: finalUrl,
               dom_data: extractDom ? domData : undefined,
             },
           });
