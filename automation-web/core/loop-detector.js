@@ -13,30 +13,39 @@ class LoopDetector {
     this.urls = [];
     this.actions = [];
     this.maxHistory = 5;
+    this.modalMode = false; // 是否为弹窗模式
   }
 
   /**
    * 记录一步
    */
   record(step) {
-    // 记录截图大小
-    if (step.screenshot_size) {
+    // 某些动作不应该触发循环检测
+    const safeActions = new Set(['extract', 'conclusion', 'wait', 'done', 'fail', 'pause']);
+
+    // 更新弹窗模式状态
+    if (step.modal_mode !== undefined) {
+      this.modalMode = step.modal_mode;
+    }
+
+    // 记录截图大小（但排除安全动作）
+    if (step.screenshot_size && !safeActions.has(step.action)) {
       this.screenshotSizes.push(step.screenshot_size);
       if (this.screenshotSizes.length > this.maxHistory) {
         this.screenshotSizes.shift();
       }
     }
 
-    // 记录 URL
-    if (step.url) {
+    // 记录 URL（但排除安全动作，且在弹窗模式下不记录 URL）
+    if (step.url && !safeActions.has(step.action) && !this.modalMode) {
       this.urls.push(step.url);
       if (this.urls.length > this.maxHistory) {
         this.urls.shift();
       }
     }
 
-    // 记录操作
-    if (step.action) {
+    // 记录操作（但排除安全动作）
+    if (step.action && !safeActions.has(step.action)) {
       this.actions.push(step.action);
       if (this.actions.length > this.maxHistory) {
         this.actions.shift();
@@ -50,6 +59,22 @@ class LoopDetector {
   detectLoop() {
     const reasons = [];
 
+    // 在弹窗模式下，只检测截图循环，不检测 URL 和 action 循环
+    if (this.modalMode) {
+      // 检测截图大小循环（连续 4 次相同，更宽松）
+      if (this.screenshotSizes.length >= 4) {
+        const last4 = this.screenshotSizes.slice(-4);
+        if (last4[0] === last4[1] && last4[1] === last4[2] && last4[2] === last4[3]) {
+          reasons.push(`screenshot_size_loop: ${last4[0]} bytes (4 times in modal mode)`);
+        }
+      }
+      return {
+        isLoop: reasons.length > 0,
+        reasons
+      };
+    }
+
+    // 非弹窗模式：正常检测
     // 检测截图大小循环（连续 3 次相同）
     if (this.screenshotSizes.length >= 3) {
       const last3 = this.screenshotSizes.slice(-3);

@@ -1,23 +1,33 @@
 "use strict";
 
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
-const { spawnSync } = require("child_process");
+const os = require("os");
 
-const { connectBrowser, getAutomationPage, grabBodyText, makeScreenshot, markHumanPauseTab } = require("./core/browser");
+const { connectBrowser, getAutomationPage, makeScreenshot, markHumanPauseTab } = require("./core/browser");
 const { toResult } = require("./core/result");
 const { guessSeedUrl: guessSeedUrlFromLearning } = require("./learning/system");
-
-// 3-phase prompts
-const { runAnalysisPhase } = require("./prompts/analysis");
-const { buildExecutionPrompt } = require("./prompts/execution");
-const { runVerificationPhase } = require("./prompts/verification");
+const { LoopDetector } = require("./core/loop-detector");
+const { runPlanner } = require("./planners");
+const { collectPageState } = require("./core/state-collector");
+const { buildPlannerPrompt } = require("./core/prompt-builder");
+const { executeDecision } = require("./core/executor");
+const { generatePlan, canExecutePlan, replan } = require("./core/task-planner");
+const { generateConclusion } = require("./core/conclusion-generator");
 
 const ROOT = path.resolve(__dirname, "..");
-const ACTION_SCHEMA_PATH = path.join(ROOT, "adapter", "agent-action.schema.json");
 const RULES_DIR = path.join(ROOT, "adapter", "rules");
 const RULES_FILE = path.join(RULES_DIR, "auto-corrections.jsonl");
+
+// Generate unique task ID for this execution
+function generateTaskId() {
+  return `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+// Get extraction file path for this task
+function getExtractionFilePath(taskId) {
+  return path.join(os.tmpdir(), `owa_extract_${taskId}.txt`);
+}
 
 function normalizeText(s) {
   return String(s || "").replace(/\s+/g, " ").trim();
@@ -34,7 +44,6 @@ function logProgress(enabled, msg) {
 }
 
 function guessSeedUrl(task) {
-  // 使用学习系统（包含 Google 搜索 fallback）
   return guessSeedUrlFromLearning(task);
 }
 
@@ -74,651 +83,6 @@ function appendRuleCorrection(record) {
   }
 }
 
-function extractJsonObject(s) {
-  const m = String(s || "").match(/\{[\s\S]*\}/);
-  return m ? m[0] : "";
-}
-
-function validateDecision(obj) {
-  if (!obj || typeof obj !== "object") return null;
-  const action = String(obj.action || "").toLowerCase();
-  const allowed = new Set(["goto", "click", "type", "press", "scroll", "wait", "done", "fail", "pause"]);
-  if (!allowed.has(action)) return null;
-  const reason = normalizeText(obj.reason || "planner_decision");
-
-  const out = {
-    action,
-    reason,
-  };
-
-  if (obj.url != null) out.url = String(obj.url);
-  if (obj.selector != null) out.selector = String(obj.selector);
-  if (obj.text != null) out.text = String(obj.text);
-  if (obj.key != null) out.key = String(obj.key);
-  if (obj.result != null) out.result = String(obj.result);
-  if (obj.data && typeof obj.data === "object" && !Array.isArray(obj.data)) out.data = obj.data;
-
-  if (obj.target_id != null && Number.isFinite(Number(obj.target_id))) out.target_id = Math.max(1, Math.floor(Number(obj.target_id)));
-  if (obj.wait_ms != null && Number.isFinite(Number(obj.wait_ms))) out.wait_ms = Math.max(0, Math.min(20000, Math.floor(Number(obj.wait_ms))));
-  if (obj.scroll_px != null && Number.isFinite(Number(obj.scroll_px))) out.scroll_px = Math.floor(Number(obj.scroll_px));
-  if (obj.clear_first != null) out.clear_first = Boolean(obj.clear_first);
-  if (obj.press_enter != null) out.press_enter = Boolean(obj.press_enter);
-
-  // Support coordinate-based clicking as fallback
-  if (obj.x != null && Number.isFinite(Number(obj.x))) out.x = Math.max(0, Math.floor(Number(obj.x)));
-  if (obj.y != null && Number.isFinite(Number(obj.y))) out.y = Math.max(0, Math.floor(Number(obj.y)));
-
-  return out;
-}
-
-function extractMessageText(content) {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((x) => {
-        if (typeof x === "string") return x;
-        if (x && typeof x.text === "string") return x.text;
-        return "";
-      })
-      .join("\n");
-  }
-  return "";
-}
-
-function runCodexPlanner(prompt, model) {
-  process.stderr.write(`[agent] using Codex backend, model=${model || "default"}\n`);
-
-  const outPath = path.join(os.tmpdir(), `owa-agent-${Date.now()}-${Math.random().toString(16).slice(2)}.json`);
-  const useOutputSchema = process.env.OWA_AGENT_CODEX_OUTPUT_SCHEMA === "1";
-  if (useOutputSchema && !fs.existsSync(ACTION_SCHEMA_PATH)) {
-    return { ok: false, error: `missing action schema: ${ACTION_SCHEMA_PATH}` };
-  }
-
-  const args = [
-    "exec",
-    "--skip-git-repo-check",
-    "--ephemeral",
-    "--color",
-    "never",
-    "--output-last-message",
-    outPath,
-    prompt,
-  ];
-  if (useOutputSchema) {
-    args.splice(args.length - 2, 0, "--output-schema", ACTION_SCHEMA_PATH);
-  }
-  if (model) {
-    args.splice(args.length - 1, 0, "-m", model);
-  }
-  const reasoning = process.env.OWA_AGENT_CODEX_REASONING || "low";
-  if (reasoning) {
-    args.splice(args.length - 1, 0, "-c", `model_reasoning_effort=\"${reasoning}\"`);
-  }
-
-  const ret = spawnSync("codex", args, {
-    cwd: ROOT,
-    env: process.env,
-    encoding: "utf8",
-    maxBuffer: 4 * 1024 * 1024,
-    timeout: Math.max(10000, toInt(process.env.OWA_AGENT_PLAN_TIMEOUT_MS, 60000)),
-  });
-
-  if (ret.error && ret.error.code === "ETIMEDOUT") {
-    return { ok: false, error: "codex planner timeout" };
-  }
-
-  if (ret.status !== 0) {
-    const detail = normalizeText(ret.stderr || ret.stdout || "codex exited non-zero");
-    return { ok: false, error: detail };
-  }
-  if (!fs.existsSync(outPath)) {
-    return { ok: false, error: "codex did not produce output" };
-  }
-
-  try {
-    const raw = fs.readFileSync(outPath, "utf8").trim();
-    if (!raw) return { ok: false, error: "codex output is empty" };
-    const jsonText = extractJsonObject(raw) || raw;
-    const parsed = JSON.parse(jsonText);
-    const decision = validateDecision(parsed);
-    if (!decision) return { ok: false, error: `codex output failed local validation: ${normalizeText(jsonText).slice(0, 240)}` };
-    return { ok: true, decision };
-  } catch (err) {
-    return { ok: false, error: `parse codex output failed: ${err.message || err}` };
-  } finally {
-    try {
-      fs.unlinkSync(outPath);
-    } catch (_err) {
-      // ignore
-    }
-  }
-}
-
-async function runApiPlanner(prompt, model, timeoutMs, screenshotB64, opts = {}) {
-  const apiKey = process.env.OWA_AGENT_API_KEY || process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return { ok: false, error: "missing OWA_AGENT_API_KEY/OPENAI_API_KEY for api planner" };
-  }
-
-  const base = String(
-    process.env.OWA_AGENT_BASE_URL || process.env.OPENAI_BASE_URL || process.env.OWA_PLANNER_BASE_URL || "https://api.openai.com/v1"
-  ).replace(/\/$/, "");
-  const plannerModel = model || process.env.OWA_AGENT_MODEL || process.env.OWA_PLANNER_MODEL || "gpt-4o-mini";
-
-  process.stderr.write(`[agent] using OpenAI backend, model=${plannerModel}, has_screenshot=${Boolean(screenshotB64)}\n`);
-
-  const system = [
-    "You output one JSON object only.",
-    "No markdown, no extra text.",
-    "JSON must match this action enum exactly: goto, click, type, press, scroll, wait, done, fail, pause.",
-    "Always include reason.",
-    "You can see a screenshot of the current page. Use it to identify clickable elements.",
-  ].join("\n");
-
-  // Build message content with screenshot if available (OpenAI vision format)
-  const userContent = [];
-  if (screenshotB64) {
-    userContent.push({
-      type: "image_url",
-      image_url: {
-        url: `data:image/jpeg;base64,${screenshotB64}`,
-      },
-    });
-  }
-  userContent.push({
-    type: "text",
-    text: prompt,
-  });
-
-  const body = {
-    model: plannerModel,
-    temperature: 0,
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: userContent },
-    ],
-  };
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const resp = await fetch(`${base}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-
-    if (!resp.ok) {
-      const t = await resp.text().catch(() => "");
-      return { ok: false, error: `api planner http ${resp.status} ${normalizeText(t).slice(0, 240)}` };
-    }
-
-    const data = await resp.json();
-    const content = data?.choices?.[0]?.message?.content;
-    const contentText = extractMessageText(content);
-
-    // rawMode: return raw text without validation
-    if (opts.rawMode) {
-      return { ok: true, raw: contentText };
-    }
-
-    const jsonText = extractJsonObject(contentText);
-    if (!jsonText) {
-      return { ok: false, error: "api planner returned non-json content" };
-    }
-
-    const parsed = JSON.parse(jsonText);
-    const decision = validateDecision(parsed);
-    if (!decision) {
-      return { ok: false, error: "api planner output failed local validation" };
-    }
-    return { ok: true, decision };
-  } catch (err) {
-    if (err && err.name === "AbortError") {
-      return { ok: false, error: "api planner timeout" };
-    }
-    return { ok: false, error: `api planner error: ${normalizeText(err.message || err)}` };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function runClaudePlanner(prompt, model, timeoutMs, screenshotB64, opts = {}) {
-  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN;
-  if (!apiKey) {
-    return { ok: false, error: "missing ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN for claude planner" };
-  }
-
-  const base = String(
-    process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com"
-  ).replace(/\/$/, "");
-  const plannerModel = model || process.env.OWA_AGENT_MODEL || "claude-sonnet-4-6";
-
-  process.stderr.write(`[agent] using Claude backend, model=${plannerModel}, has_screenshot=${Boolean(screenshotB64)}\n`);
-
-  const system = [
-    "You output one JSON object only.",
-    "No markdown, no extra text.",
-    "JSON must match this action enum exactly: goto, click, type, press, scroll, wait, done, fail, pause.",
-    "Always include reason.",
-    "You can see a screenshot of the current page. Use it to identify clickable elements.",
-  ].join("\n");
-
-  // Build message content with screenshot if available
-  const messageContent = [];
-  if (screenshotB64) {
-    messageContent.push({
-      type: "image",
-      source: {
-        type: "base64",
-        media_type: "image/jpeg",  // 修正：截图是 JPEG 格式
-        data: screenshotB64,
-      },
-    });
-  }
-  messageContent.push({
-    type: "text",
-    text: prompt,
-  });
-
-  const body = {
-    model: plannerModel,
-    max_tokens: 1024,
-    temperature: 0,
-    system,
-    messages: [
-      { role: "user", content: messageContent },
-    ],
-  };
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const resp = await fetch(`${base}/v1/messages`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-
-    if (!resp.ok) {
-      const t = await resp.text().catch(() => "");
-      return { ok: false, error: `claude planner http ${resp.status} ${normalizeText(t).slice(0, 240)}` };
-    }
-
-    const data = await resp.json();
-    const content = data?.content?.[0]?.text;
-    if (!content) {
-      return { ok: false, error: "claude planner returned empty content" };
-    }
-
-    // rawMode: return raw text without validation
-    if (opts.rawMode) {
-      return { ok: true, raw: content };
-    }
-
-    const jsonText = extractJsonObject(content);
-    if (!jsonText) {
-      return { ok: false, error: "claude planner returned non-json content" };
-    }
-
-    const parsed = JSON.parse(jsonText);
-    const decision = validateDecision(parsed);
-    if (!decision) {
-      return { ok: false, error: "claude planner output failed local validation" };
-    }
-    return { ok: true, decision };
-  } catch (err) {
-    if (err && err.name === "AbortError") {
-      return { ok: false, error: "claude planner timeout" };
-    }
-    return { ok: false, error: `claude planner error: ${normalizeText(err.message || err)}` };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function runPlanner(prompt, model, screenshotB64, opts = {}) {
-  const backend = String(process.env.OWA_AGENT_BACKEND || "auto").toLowerCase();
-  const timeoutMs = Math.max(5000, toInt(process.env.OWA_AGENT_PLAN_TIMEOUT_MS, 60000));
-
-  if (backend === "claude" || backend === "anthropic") {
-    return runClaudePlanner(prompt, model, timeoutMs, screenshotB64, opts);
-  }
-  if (backend === "api" || backend === "openai") {
-    return runApiPlanner(prompt, model, timeoutMs, screenshotB64, opts);
-  }
-  if (backend === "codex" || backend === "codex-cli") {
-    return runCodexPlanner(prompt, model);
-  }
-
-  const hasClaudeKey = Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
-  if (hasClaudeKey) {
-    const claudeRet = await runClaudePlanner(prompt, model, timeoutMs, screenshotB64, opts);
-    if (claudeRet.ok) return claudeRet;
-  }
-
-  const hasApiKey = Boolean(process.env.OWA_AGENT_API_KEY || process.env.OPENAI_API_KEY);
-  if (hasApiKey) {
-    const apiRet = await runApiPlanner(prompt, model, timeoutMs, screenshotB64, opts);
-    if (apiRet.ok) return apiRet;
-    const codexRet = runCodexPlanner(prompt, model);
-    if (codexRet.ok) return codexRet;
-    return { ok: false, error: `api+codex failed: ${apiRet.error}; ${codexRet.error}` };
-  }
-
-  return runCodexPlanner(prompt, model);
-}
-
-async function collectCandidates(page, limit) {
-  return page.evaluate((maxCount) => {
-    function isVisible(el) {
-      const rect = el.getBoundingClientRect();
-      if (!rect || rect.width < 4 || rect.height < 4) return false;
-      const style = window.getComputedStyle(el);
-      if (!style) return false;
-      if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") < 0.05) return false;
-      return true;
-    }
-
-    function safeText(el) {
-      // Separate different types of text to avoid confusion
-      const innerText = (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
-      const ariaLabel = el.getAttribute("aria-label") || "";
-      const title = el.getAttribute("title") || "";
-
-      // Prefer actual content over attributes
-      if (innerText) return innerText.slice(0, 120);
-      if (ariaLabel) return ariaLabel.slice(0, 120);
-      if (title) return title.slice(0, 120);
-
-      return "";
-    }
-
-    function esc(v) {
-      if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(v);
-      return String(v).replace(/([#.;,[\]:()>+~*'"\\\s])/g, "\\$1");
-    }
-
-    function nthOfType(el) {
-      const tag = el.tagName.toLowerCase();
-      let idx = 1;
-      let prev = el.previousElementSibling;
-      while (prev) {
-        if (prev.tagName.toLowerCase() === tag) idx += 1;
-        prev = prev.previousElementSibling;
-      }
-      return idx;
-    }
-
-    function cssPath(el) {
-      if (el.id) return `#${esc(el.id)}`;
-      const dataTestId = el.getAttribute("data-testid") || el.getAttribute("data-test");
-      if (dataTestId) return `[data-testid="${esc(dataTestId)}"]`;
-      const parts = [];
-      let cur = el;
-      let depth = 0;
-      while (cur && cur.nodeType === 1 && depth < 5) {
-        const tag = cur.tagName.toLowerCase();
-        const part = `${tag}:nth-of-type(${nthOfType(cur)})`;
-        parts.unshift(part);
-        if (cur.id) {
-          parts[0] = `#${esc(cur.id)}`;
-          break;
-        }
-        cur = cur.parentElement;
-        depth += 1;
-      }
-      return parts.join(" > ");
-    }
-
-    // Primary: collect standard interactive elements
-    const nodes = Array.from(
-      document.querySelectorAll("a,button,input,textarea,select,[role='button'],[role='link'],[contenteditable='true']")
-    );
-    const seen = new Set();
-    const out = [];
-
-    for (const node of nodes) {
-      if (!isVisible(node)) continue;
-      const text = safeText(node);
-      const selector = cssPath(node);
-      if (!selector) continue;
-      const key = `${selector}__${text}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      out.push({
-        id: out.length + 1,
-        tag: node.tagName.toLowerCase(),
-        role: (node.getAttribute("role") || "").toLowerCase(),
-        type: (node.getAttribute("type") || "").toLowerCase(),
-        text,
-        selector,
-      });
-      if (out.length >= maxCount) break;
-    }
-
-    // Fallback: collect clickable divs/spans with onclick or cursor:pointer
-    if (out.length < maxCount) {
-      const allElements = Array.from(document.querySelectorAll("div,span,li,article,section"));
-      for (const el of allElements) {
-        if (out.length >= maxCount) break;
-        if (!isVisible(el)) continue;
-
-        const style = window.getComputedStyle(el);
-        const hasClickCursor = style.cursor === "pointer";
-        const hasOnClick = el.onclick !== null || el.getAttribute("onclick");
-        const hasClickClass = el.className && (
-          el.className.includes("click") ||
-          el.className.includes("card") ||
-          el.className.includes("item") ||
-          el.className.includes("link")
-        );
-
-        if (!hasClickCursor && !hasOnClick && !hasClickClass) continue;
-
-        const text = safeText(el);
-        if (!text || text.length < 2) continue; // Skip elements with no meaningful text
-
-        const selector = cssPath(el);
-        if (!selector) continue;
-        const key = `${selector}__${text}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-
-        out.push({
-          id: out.length + 1,
-          tag: el.tagName.toLowerCase(),
-          role: "clickable-fallback",
-          type: "",
-          text,
-          selector,
-        });
-      }
-    }
-
-    return out;
-  }, Math.max(5, Math.min(120, limit)));
-}
-
-async function collectPageState(page, step, candidateLimit) {
-  // Wait for page to be stable after navigation
-  try {
-    await page.waitForLoadState("domcontentloaded", { timeout: 5000 });
-  } catch (_err) {
-    // ignore timeout, continue anyway
-  }
-
-  const url = page.url();
-  const title = await page.title().catch(() => "");
-  const text = await grabBodyText(page, 2000).catch(() => "");
-  const candidatesFull = await collectCandidates(page, candidateLimit).catch(() => []);
-  const label = `agent-step-${step}`;
-  const shot = await makeScreenshot(page, label);
-
-  // 创建精简版 candidates（不含 selector）给 Agent 看
-  // 这样 Agent 只能使用 target_id，避免 selector 冲突
-  const candidatesForAgent = candidatesFull.map(c => ({
-    id: c.id,
-    tag: c.tag,
-    role: c.role,
-    type: c.type,
-    text: c.text,
-    // selector 字段被移除，Agent 看不到
-  }));
-
-  return {
-    step,
-    url,
-    title,
-    body_text: text,
-    screenshot_path: shot.filePath || "",
-    screenshot_b64: shot.base64 || "",
-    candidates: candidatesForAgent,  // 给 Agent 的精简版
-    candidatesFull,  // 完整版，用于 resolveSelector
-  };
-}
-
-function resolveSelector(decision, state) {
-  // 强制只使用 target_id，忽略 Agent 提供的 selector
-  // 避免 Agent 从 history 中学到 selector 格式后自己构造错误的 selector
-  if (!decision.target_id) return "";
-  // 使用完整版 candidates（包含 selector）
-  const candidates = state.candidatesFull || state.candidates || [];
-  const hit = candidates.find((x) => Number(x.id) === Number(decision.target_id));
-  return hit ? hit.selector : "";
-}
-
-async function executeDecision(page, decision, state) {
-  const action = decision.action;
-  if (action === "goto") {
-    if (!decision.url) throw new Error("goto requires url");
-    await page.goto(decision.url, { waitUntil: "domcontentloaded", timeout: 90000 });
-    return { done: false, note: `goto ${decision.url}` };
-  }
-
-  if (action === "click") {
-    // Try coordinate-based clicking first (fallback for vision-based detection)
-    if (decision.x != null && decision.y != null) {
-      await page.mouse.click(decision.x, decision.y);
-      // 点击后等待可能的页面变化（网络请求或 DOM 更新）
-      await page.waitForTimeout(2000);
-      return { done: false, note: `click at (${decision.x}, ${decision.y})` };
-    }
-
-    // Otherwise use selector-based clicking
-    const selector = resolveSelector(decision, state);
-    if (!selector) throw new Error("click requires selector, valid target_id, or coordinates (x, y)");
-
-    // 点击并等待可能的导航或网络活动
-    const currentUrl = page.url();
-    await page.locator(selector).first().click({ timeout: 10000 });
-
-    // 智能等待：检测是否有导航或网络活动
-    try {
-      // 等待以下任一条件：
-      // 1. URL 改变（SPA 路由跳转）
-      // 2. 网络空闲（AJAX 加载完成）
-      // 3. 超时 3 秒（避免无限等待）
-      await Promise.race([
-        page.waitForURL((url) => url !== currentUrl, { timeout: 3000 }).catch(() => {}),
-        page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {}),
-        page.waitForTimeout(3000)
-      ]);
-    } catch (_err) {
-      // 如果所有等待都失败，至少等待 800ms 让页面有时间响应
-      await page.waitForTimeout(800);
-    }
-
-    return { done: false, note: `click ${selector}` };
-  }
-
-  if (action === "type") {
-    const selector = resolveSelector(decision, state);
-    if (!selector) throw new Error("type requires selector or valid target_id");
-    const text = decision.text != null ? String(decision.text) : "";
-    const clearFirst = decision.clear_first !== false;
-    const locator = page.locator(selector).first();
-    await locator.click({ timeout: 10000 });
-    if (clearFirst) {
-      try {
-        await locator.fill("");
-      } catch (_err) {
-        // ignore
-      }
-    }
-    try {
-      await locator.fill(text);
-    } catch (_err) {
-      await page.keyboard.type(text, { delay: 15 });
-    }
-    if (decision.press_enter) {
-      await page.keyboard.press("Enter");
-    }
-    return { done: false, note: `type ${selector}` };
-  }
-
-  if (action === "press") {
-    const key = decision.key || "Enter";
-    await page.keyboard.press(key);
-    return { done: false, note: `press ${key}` };
-  }
-
-  if (action === "scroll") {
-    const px = Number.isFinite(Number(decision.scroll_px)) ? Number(decision.scroll_px) : 900;
-    await page.mouse.wheel(0, px);
-    return { done: false, note: `scroll ${px}` };
-  }
-
-  if (action === "wait") {
-    const ms = Number.isFinite(Number(decision.wait_ms)) ? toInt(decision.wait_ms, 1200) : 1200;
-    await page.waitForTimeout(Math.max(200, Math.min(ms, 20000)));
-    return { done: false, note: `wait ${ms}` };
-  }
-
-  if (action === "done") {
-    return {
-      done: true,
-      success: true,
-      result: decision.result || "task completed",
-      data: decision.data || {},
-      note: "done",
-    };
-  }
-
-  if (action === "fail") {
-    return {
-      done: true,
-      success: false,
-      result: decision.result || decision.reason || "planner marked as failed",
-      data: decision.data || {},
-      note: "fail",
-    };
-  }
-
-  if (action === "pause") {
-    return {
-      done: true,
-      success: false,
-      requiresHuman: true,
-      result: decision.result || decision.reason || "paused for human intervention",
-      data: decision.data || {},
-      note: "pause",
-    };
-  }
-
-  throw new Error(`unsupported action: ${action}`);
-}
-
 async function runAgentTask(rawTask, opts = {}) {
   const task = normalizeText(rawTask);
   if (!task) {
@@ -739,17 +103,21 @@ async function runAgentTask(rawTask, opts = {}) {
   const debug = process.env.OWA_AGENT_DEBUG === "1";
   const progress = process.env.OWA_AGENT_PROGRESS !== "0";
   const timeoutMs = Math.max(1000, toInt(process.env.WEB_TASK_TIMEOUT_MS, 180000));
-  const includeScreenshot = process.env.OWA_AGENT_INCLUDE_SCREENSHOT === "1"; // 默认不返回 base64 截图，只返回路径
+  const usePlanningMode = process.env.OWA_AGENT_PLANNING_MODE === "1";
+  const includeScreenshot = process.env.OWA_INCLUDE_SCREENSHOT === "1" || opts.includeScreenshot; // 新增：screenshot 可选
   const startedAt = Date.now();
 
   let browser;
   let page;
   let lastShotPath = "";
   let lastShotB64 = "";
-  let lastUrl = ""; // 跟踪最后访问的 URL
-  let agentPlan = null; // populated after phase 1 (task analysis)
+  let lastUrl = "";
   const history = [];
+  const taskId = generateTaskId(); // Unique ID for this task
+  const extractionFile = getExtractionFilePath(taskId); // File to store extracted content
+  let extractedCount = 0; // Counter for extracted items
   let requiresHuman = false;
+  const loopDetector = new LoopDetector();
 
   try {
     const conn = await connectBrowser(cdpUrl);
@@ -758,22 +126,40 @@ async function runAgentTask(rawTask, opts = {}) {
     page.setDefaultTimeout(12000);
     logProgress(progress, `task started: ${task}`);
 
+    // Planning Mode: Generate complete plan first
+    let executionPlan = null;
+    if (usePlanningMode) {
+      logProgress(progress, "generating execution plan...");
+
+      // Get initial state
+      const initialState = await collectPageState(page, 0, candidateLimit);
+      const planResult = await generatePlan(task, initialState, maxSteps);
+
+      if (!planResult.ok) {
+        return toResult({
+          success: false,
+          exit_code: 4,
+          message: `planning failed: ${planResult.error}`,
+          meta: { requires_human: false, task },
+        });
+      }
+
+      executionPlan = planResult.plan;
+      logProgress(progress, `plan generated (${executionPlan.length} steps):`);
+      executionPlan.forEach((step, idx) => {
+        const actionDesc = step.action === "type" ? `${step.action} "${step.text}"` :
+                          step.action === "goto" ? `${step.action} ${step.url}` :
+                          step.action;
+        logProgress(progress, `  ${idx + 1}. ${actionDesc} - ${step.reason}`);
+      });
+    }
+
     for (let step = 1; step <= maxSteps; step += 1) {
       if (Date.now() - startedAt > timeoutMs) {
-        // 任务超时，截取最终状态的图
-        logProgress(progress, 'task timeout, taking final screenshot...');
-        try {
-          const finalShot = await makeScreenshot(page, 'timeout-final');
-          lastShotPath = finalShot.filePath;
-          lastShotB64 = finalShot.base64;
-        } catch (_err) {
-          // ignore screenshot error
-        }
-
         return toResult({
           success: false,
           exit_code: 124,
-          screenshot: lastShotB64,
+          screenshot: includeScreenshot ? lastShotB64 : "",
           message: `task timeout (${timeoutMs}ms)`,
           meta: {
             requires_human: false,
@@ -788,16 +174,25 @@ async function runAgentTask(rawTask, opts = {}) {
       const state = await collectPageState(page, step, candidateLimit);
       lastShotPath = state.screenshot_path || lastShotPath;
       lastShotB64 = state.screenshot_b64 || lastShotB64;
-      lastUrl = state.url || lastUrl; // 更新最后的 URL
+      lastUrl = state.url || lastUrl;
+
+      const screenshotSize = state.screenshot_b64 ? state.screenshot_b64.length : 0;
+      loopDetector.record({
+        screenshot_size: screenshotSize,
+        url: state.url,
+      });
+
+      if (debug) {
+        process.stderr.write(`[agent] step=${step} screenshot size: ${screenshotSize} bytes\n`);
+      }
+
       logProgress(progress, `step ${step}/${maxSteps} url=${state.url || "about:blank"} planning...`);
 
-      // 清理浏览器状态：如果不是 about:blank 且是第一步，先清理
       if (step === 1 && !String(state.url || "").startsWith("about:blank")) {
         logProgress(progress, `cleaning browser state from ${state.url}`);
         await page.goto("about:blank");
         await page.waitForTimeout(300);
 
-        // 现在执行 seed navigation
         const seedUrl = guessSeedUrl(task);
         logProgress(progress, `seed navigation -> ${seedUrl}`);
         await page.goto(seedUrl, { waitUntil: "domcontentloaded", timeout: 90000 });
@@ -809,6 +204,7 @@ async function runAgentTask(rawTask, opts = {}) {
           url: "about:blank",
         });
         await page.waitForTimeout(600);
+        loopDetector.reset();
         continue;
       }
 
@@ -824,72 +220,122 @@ async function runAgentTask(rawTask, opts = {}) {
           url: state.url || "about:blank",
         });
         await page.waitForTimeout(600);
+        loopDetector.reset();
         continue;
       }
 
-      // 完全移除关键词检测，让 LLM 通过截图判断
       const rules = loadRecentRules(10);
-      logProgress(progress, `planner backend=${String(process.env.OWA_AGENT_BACKEND || "auto").toLowerCase()}`);
-
-      // Phase 1: Task Analysis (first real planning step, after seed navigation)
-      if (agentPlan === null) {
-        logProgress(progress, `phase 1: task analysis`);
-        const analysisRet = await runAnalysisPhase(task, state, model, runPlanner, extractJsonObject);
-        if (analysisRet.ok) {
-          agentPlan = analysisRet.plan;
-          logProgress(progress, `plan: filters=${JSON.stringify(agentPlan.hard_filters)} steps=${agentPlan.steps.length}`);
-        } else {
-          logProgress(progress, `analysis phase failed (${analysisRet.error}), using default prompt`);
-          agentPlan = { hard_filters: [], preferences: [], steps: [task], target_site: "" };
-        }
-      }
-
-      // Use vision for Claude backend, but reduce history to save context
       const backend = String(process.env.OWA_AGENT_BACKEND || "auto").toLowerCase();
       const useVision = backend === "claude" || backend === "anthropic" || backend === "auto";
 
-      // When using vision, reduce history to save context space
-      const historyForPrompt = useVision ? history.slice(-3) : history.slice(-8);
+      let decision;
 
-      // Phase 2: Execution prompt (replaces buildPlannerPrompt)
-      const prompt = buildExecutionPrompt(task, step, maxSteps, state, historyForPrompt, rules, agentPlan);
+      // Planning Mode: Use pre-generated plan
+      if (usePlanningMode && executionPlan && executionPlan.length > 0) {
+        const plannedAction = executionPlan.shift(); // Get next planned action
 
-      const screenshot = useVision ? state.screenshot_b64 : "";
+        // Validate if action can be executed
+        if (canExecutePlan(plannedAction, state)) {
+          decision = plannedAction;
+          logProgress(progress, `executing planned step ${step}/${maxSteps}`);
+        } else {
+          // Replan if action cannot be executed
+          logProgress(progress, `replanning from step ${step} (action not executable)`);
+          const replanResult = await replan(task, state, history, executionPlan);
 
+          if (!replanResult.ok) {
+            return toResult({
+              success: false,
+              exit_code: 4,
+              screenshot: includeScreenshot ? lastShotB64 : "",
+              message: `replanning failed: ${replanResult.error}`,
+              meta: { requires_human: false, task, step, url: state.url },
+            });
+          }
+
+          executionPlan = replanResult.plan;
+          decision = executionPlan.shift();
+        }
+      } else {
+        // Reactive Mode: Ask LLM for next action
+        const historyForPrompt = useVision ? history.slice(-3) : history.slice(-8);
+        const prompt = buildPlannerPrompt(task, step, maxSteps, state, historyForPrompt, rules, false, extractedCount);
+        const screenshot = useVision ? state.screenshot_b64 : "";
+
+        if (debug) {
+          process.stderr.write(`[agent] step=${step} screenshot_b64_length=${state.screenshot_b64?.length || 0} screenshot_path=${state.screenshot_path}\n`);
+        }
+
+        const planRet = await runPlanner(prompt, model, screenshot);
+        if (!planRet.ok) {
+          return toResult({
+            success: false,
+            exit_code: 4,
+            screenshot: includeScreenshot ? lastShotB64 : "",
+            message: `planner failed: ${planRet.error}`,
+            meta: {
+              requires_human: false,
+              task,
+              step,
+              cdpUrl,
+              url: state.url,
+              screenshot_path: lastShotPath,
+            },
+          });
+        }
+
+        decision = planRet.decision;
+      }
+
+      // Always show agent's reasoning (not just in debug mode)
+      const actionDesc = decision.action === "type" ? `${decision.action} "${decision.text}"` :
+                        decision.action === "goto" ? `${decision.action} ${decision.url}` :
+                        decision.action;
+
+      logProgress(progress, `[${step}/${maxSteps}] ${actionDesc}`);
+
+      // Show reasoning chain
+      if (decision.reason) {
+        logProgress(progress, `  └─ reason: ${decision.reason}`);
+      }
+
+      // Show key parameters
+      if (decision.selector) {
+        logProgress(progress, `  └─ selector: ${decision.selector}`);
+      }
+      if (decision.target_id) {
+        logProgress(progress, `  └─ target_id: ${decision.target_id}`);
+      }
+      if (decision.label) {
+        logProgress(progress, `  └─ label: ${decision.label}`);
+      }
+
+      // Debug mode: even more detailed info
       if (debug) {
-        process.stderr.write(`[agent] step=${step} screenshot_b64_length=${state.screenshot_b64?.length || 0} screenshot_path=${state.screenshot_path}\n`);
-      }
-
-      if (useVision && screenshot) {
-        logProgress(progress, `using vision (screenshot size: ${screenshot.length} bytes)`);
-      }
-
-      const planRet = await runPlanner(prompt, model, screenshot);
-      if (!planRet.ok) {
-        return toResult({
-          success: false,
-          exit_code: 4,
-          screenshot: lastShotB64,
-          message: `planner failed: ${planRet.error}`,
-          meta: {
-            requires_human: false,
-            task,
-            step,
-            cdpUrl,
-            url: state.url,
-            screenshot_path: lastShotPath,
-          },
-        });
-      }
-
-      const decision = planRet.decision;
-      logProgress(progress, `step ${step} action=${decision.action}`);
-      if (debug) {
-        process.stderr.write(`[agent] step=${step} action=${decision.action} reason=${decision.reason}\n`);
+        process.stderr.write(`\n[agent] ===== Step ${step}/${maxSteps} =====\n`);
+        process.stderr.write(`[agent] Full decision: ${JSON.stringify(decision, null, 2)}\n`);
       }
 
       try {
-        const execRet = await executeDecision(page, decision, state);
+        const execRet = await executeDecision(page, decision, state, debug);
+
+        // Store extracted data to file
+        if (decision.action === "extract" && execRet.data) {
+          extractedCount++;
+          const extractionEntry = `--- Extract #${extractedCount} (${execRet.data.label || "unlabeled"}) ---\n${execRet.data.content}\n${
+            execRet.data.full_length > execRet.data.content.length
+              ? `[Truncated, full length: ${execRet.data.full_length} chars]\n`
+              : ""
+          }\n`;
+
+          fs.appendFileSync(extractionFile, extractionEntry, "utf-8");
+
+          if (debug) {
+            process.stderr.write(`[agent] stored extraction #${extractedCount}: ${execRet.data.label}\n`);
+            process.stderr.write(`[agent] extraction file: ${extractionFile}\n`);
+          }
+        }
+
         history.push({
           step,
           action: decision.action,
@@ -898,31 +344,28 @@ async function runAgentTask(rawTask, opts = {}) {
           url: state.url,
         });
 
+        // Check if task is done BEFORE loop detection
         if (execRet.done) {
           if (execRet.requiresHuman) {
             requiresHuman = true;
           }
-
-          // Phase 3: Verification (only for successful done, not fail/pause)
-          if (execRet.success && agentPlan) {
-            logProgress(progress, `phase 3: verifying task completion`);
-            const verifyRet = await runVerificationPhase(task, agentPlan, state, history, model, runPlanner, extractJsonObject);
-            if (!verifyRet.verified) {
-              logProgress(progress, `verification failed: ${verifyRet.reason} — continuing execution`);
-              history.push({ step, action: "verify_failed", reason: verifyRet.reason, url: state.url });
-              await page.waitForTimeout(300);
-              continue;
-            }
-          }
-
           const finalShot = await makeScreenshot(page, `agent-final-${step}`);
           lastShotPath = finalShot.filePath;
           lastShotB64 = finalShot.base64;
 
-          // 获取最终的实际 URL（而不是 step 开始时的 URL）
           const finalUrl = page.url();
 
-          // DOM提取模式：获取完整页面数据
+          // Generate conclusion if we have extracted data
+          let conclusion = null;
+          if (extractedCount > 0 && fs.existsSync(extractionFile)) {
+            logProgress(progress, "generating conclusion from extracted data");
+            try {
+              conclusion = await generateConclusion(extractionFile, task, model, { debugMode: opts.debugMode });
+            } catch (err) {
+              logProgress(progress, `conclusion generation failed: ${err.message}`);
+            }
+          }
+
           const extractDom = process.env.OWA_EXTRACT_DOM === "1" || opts.extractDom;
           let domData = {};
 
@@ -939,21 +382,68 @@ async function runAgentTask(rawTask, opts = {}) {
           return toResult({
             success: execRet.success,
             exit_code: execRet.success ? 0 : (execRet.requiresHuman ? 2 : 1),
-            screenshot: lastShotB64,
+            screenshot: includeScreenshot ? lastShotB64 : "",
             message: execRet.result,
             meta: {
               requires_human: execRet.requiresHuman || false,
               task,
               steps: history,
               data: execRet.data || {},
-              screenshot_path: lastShotPath,
+              extracted_count: extractedCount,
+              extraction_file: extractedCount > 0 ? extractionFile : null,
+              conclusion,
+              screenshot_path: includeScreenshot ? lastShotPath : "",
               url: finalUrl,
               dom_data: extractDom ? domData : undefined,
             },
           });
         }
 
-        // Small buffer to let any triggered actions settle
+        // Only check loop if task is not done
+        loopDetector.record({
+          action: decision.action,
+          modal_mode: state.site_hints?.modal_mode || false, // 传递弹窗模式信息
+        });
+
+        const loopCheck = loopDetector.detectLoop();
+        if (loopCheck.isLoop) {
+          logProgress(progress, `loop detected: ${loopCheck.reasons.join(', ')}`);
+
+          try {
+            const finalShot = await makeScreenshot(page, 'loop-detected-final');
+            lastShotPath = finalShot.filePath;
+            lastShotB64 = finalShot.base64;
+          } catch (_err) {
+            // ignore
+          }
+
+          // Build a more helpful error message
+          let errorMessage = `Loop detected: ${loopCheck.reasons.join(', ')}`;
+          if (extractedCount > 0) {
+            errorMessage += `\n\nPartially completed: Extracted ${extractedCount} item(s) before loop.`;
+            errorMessage += `\nExtraction file: ${extractionFile}`;
+          }
+          errorMessage += `\n\nLast action: ${history[history.length - 1]?.action || 'unknown'}`;
+          errorMessage += `\nSuggestion: The task may need manual intervention or the page structure changed.`;
+
+          return toResult({
+            success: false,
+            exit_code: 125,
+            screenshot: includeScreenshot ? lastShotB64 : "",
+            message: errorMessage,
+            meta: {
+              requires_human: false,
+              task,
+              steps: history,
+              extracted_count: extractedCount,
+              extraction_file: extractedCount > 0 ? extractionFile : null,
+              screenshot_path: lastShotPath,
+              url: lastUrl,
+              loop_reasons: loopCheck.reasons,
+            },
+          });
+        }
+
         await page.waitForTimeout(300);
       } catch (err) {
         const detail = normalizeText(err.message || err);
@@ -976,20 +466,10 @@ async function runAgentTask(rawTask, opts = {}) {
       }
     }
 
-    // max steps reached, take final screenshot
-    logProgress(progress, 'max steps reached, taking final screenshot...');
-    try {
-      const finalShot = await makeScreenshot(page, 'maxsteps-final');
-      lastShotPath = finalShot.filePath;
-      lastShotB64 = finalShot.base64;
-    } catch (_err) {
-      // ignore screenshot error
-    }
-
     return toResult({
       success: false,
       exit_code: 124,
-      screenshot: lastShotB64,
+      screenshot: includeScreenshot ? lastShotB64 : "",
       message: `max steps reached (${maxSteps})`,
       meta: {
         requires_human: false,
@@ -1003,7 +483,7 @@ async function runAgentTask(rawTask, opts = {}) {
     return toResult({
       success: false,
       exit_code: 1,
-      screenshot: lastShotB64,
+      screenshot: includeScreenshot ? lastShotB64 : "",
       message: `agent failed: ${normalizeText(err.message || err)}`,
       meta: {
         requires_human: false,
