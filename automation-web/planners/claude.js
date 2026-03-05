@@ -20,7 +20,7 @@ async function runClaudePlanner(prompt, model, timeoutMs, screenshotB64) {
   const system = [
     "You output one JSON object only.",
     "No markdown, no extra text.",
-    "JSON must match this action enum exactly: goto, click, type, press, scroll, wait, done, fail, pause.",
+    "JSON must match this action enum exactly: goto, click, type, press, scroll, wait, extract, close, back, done, fail, pause.",
     "Always include reason.",
     "You can see a screenshot of the current page. Use it to identify clickable elements.",
   ].join("\n");
@@ -100,7 +100,7 @@ async function runClaudePlanner(prompt, model, timeoutMs, screenshotB64) {
 function validateDecision(obj) {
   if (!obj || typeof obj !== "object") return null;
   const action = String(obj.action || "").toLowerCase();
-  const allowed = new Set(["goto", "click", "type", "press", "scroll", "wait", "done", "fail", "pause"]);
+  const allowed = new Set(["goto", "click", "type", "press", "scroll", "wait", "extract", "close", "back", "done", "fail", "pause"]);
   if (!allowed.has(action)) return null;
   const reason = (obj.reason || "planner_decision").replace(/\s+/g, " ").trim();
 
@@ -117,6 +117,15 @@ function validateDecision(obj) {
   if (obj.wait_ms != null && Number.isFinite(Number(obj.wait_ms))) out.wait_ms = Math.max(0, Math.min(20000, Math.floor(Number(obj.wait_ms))));
   if (obj.scroll_px != null && Number.isFinite(Number(obj.scroll_px))) out.scroll_px = Math.floor(Number(obj.scroll_px));
   if (obj.clear_first != null) out.clear_first = Boolean(obj.clear_first);
+  if (obj.press_enter != null) out.press_enter = Boolean(obj.press_enter);
+
+  // Extract action parameters
+  if (obj.label != null) out.label = String(obj.label);
+  if (obj.max_length != null && Number.isFinite(Number(obj.max_length))) out.max_length = Math.floor(Number(obj.max_length));
+
+  // Close action parameters
+  if (obj.method != null) out.method = String(obj.method);
+  if (obj.use_back != null) out.use_back = Boolean(obj.use_back);
   if (obj.press_enter != null) out.press_enter = Boolean(obj.press_enter);
 
   if (obj.x != null && Number.isFinite(Number(obj.x))) out.x = Math.max(0, Math.floor(Number(obj.x)));
