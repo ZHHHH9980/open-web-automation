@@ -1,5 +1,5 @@
 {
   "cdpUrl": "http://127.0.0.1:9222",
-  "profilePath": "/Users/a1/Library/Application Support/Google/Chrome/Profile 4",
+  "profilePath": "/tmp/chrome-automation-profile",
   "chromePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 }

@@ -113,6 +113,71 @@ async function executeDecision(page, decision, state) {
     };
   }
 
+  if (action === "extract") {
+    // Extract content from current page
+    const selector = decision.selector || resolveSelector(decision, state);
+    const label = decision.label || "unlabeled";
+    const maxLength = Number.isFinite(Number(decision.max_length)) ? Number(decision.max_length) : 5000;
+
+    let content = "";
+    let fullLength = 0;
+
+    if (selector) {
+      // Extract from specific element
+      try {
+        const text = await page.locator(selector).first().innerText({ timeout: 5000 });
+        fullLength = text.length;
+        content = text.slice(0, maxLength);
+      } catch (err) {
+        throw new Error(`extract failed: ${err.message}`);
+      }
+    } else {
+      // Extract from entire page body
+      try {
+        const text = await page.locator("body").innerText({ timeout: 5000 });
+        fullLength = text.length;
+        content = text.slice(0, maxLength);
+      } catch (err) {
+        throw new Error(`extract failed: ${err.message}`);
+      }
+    }
+
+    return {
+      done: false,
+      data: {
+        label,
+        content,
+        full_length: fullLength,
+      },
+      note: `extract ${label}`,
+    };
+  }
+
+  if (action === "close") {
+    // Close modal/popup or go back
+    // Strategy 1: Try pressing Escape key (works for most modals)
+    // Strategy 2: Try clicking close button if specified
+    // Strategy 3: Go back in history
+
+    if (decision.method === "back" || decision.use_back) {
+      await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 });
+      return { done: false, note: "close via back" };
+    }
+
+    if (decision.selector || decision.target_id) {
+      // Click close button
+      const selector = resolveSelector(decision, state);
+      if (!selector) throw new Error("close requires valid selector or target_id");
+      await page.locator(selector).first().click({ timeout: 5000 });
+      return { done: false, note: `close via click ${selector}` };
+    }
+
+    // Default: press Escape
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+    return { done: false, note: "close via Escape" };
+  }
+
   throw new Error(`unsupported action: ${action}`);
 }
 

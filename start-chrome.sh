@@ -21,9 +21,17 @@ echo "CDP 端口: $CDP_PORT"
 echo "Profile 路径: $PROFILE_PATH"
 echo "Chrome 路径: $CHROME_PATH"
 
+# Extract user data dir and profile directory
+USER_DATA_DIR=$(dirname "$PROFILE_PATH")
+PROFILE_DIR=$(basename "$PROFILE_PATH")
+
+echo "User Data Dir: $USER_DATA_DIR"
+echo "Profile Directory: $PROFILE_DIR"
+
 "$CHROME_PATH" \
   --remote-debugging-port=$CDP_PORT \
-  --user-data-dir="$PROFILE_PATH" \
+  --user-data-dir="$USER_DATA_DIR" \
+  --profile-directory="$PROFILE_DIR" \
   > /dev/null 2>&1 &
 
 echo "Chrome 已启动，PID: $!"

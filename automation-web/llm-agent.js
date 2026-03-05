@@ -15,10 +15,6 @@ const { executeDecision } = require("./core/executor");
 const { generatePlan, canExecutePlan, replan } = require("./core/task-planner");
 const { generateConclusion } = require("./core/conclusion-generator");
 
-const ROOT = path.resolve(__dirname, "..");
-const RULES_DIR = path.join(ROOT, "adapter", "rules");
-const RULES_FILE = path.join(RULES_DIR, "auto-corrections.jsonl");
-
 // Generate unique task ID for this execution
 function generateTaskId() {
   return `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -45,42 +41,6 @@ function logProgress(enabled, msg) {
 
 function guessSeedUrl(task) {
   return guessSeedUrlFromLearning(task);
-}
-
-function ensureRulesStore() {
-  if (!fs.existsSync(RULES_DIR)) fs.mkdirSync(RULES_DIR, { recursive: true });
-  if (!fs.existsSync(RULES_FILE)) fs.writeFileSync(RULES_FILE, "", "utf8");
-}
-
-function loadRecentRules(limit = 12) {
-  try {
-    ensureRulesStore();
-    const lines = fs
-      .readFileSync(RULES_FILE, "utf8")
-      .split("\n")
-      .map((x) => x.trim())
-      .filter(Boolean);
-    const rows = [];
-    for (let i = Math.max(0, lines.length - limit); i < lines.length; i += 1) {
-      try {
-        rows.push(JSON.parse(lines[i]));
-      } catch (_err) {
-        // ignore bad line
-      }
-    }
-    return rows;
-  } catch (_err) {
-    return [];
-  }
-}
-
-function appendRuleCorrection(record) {
-  try {
-    ensureRulesStore();
-    fs.appendFileSync(RULES_FILE, `${JSON.stringify(record)}\n`, "utf8");
-  } catch (_err) {
-    // ignore
-  }
 }
 
 async function runAgentTask(rawTask, opts = {}) {
@@ -224,7 +184,6 @@ async function runAgentTask(rawTask, opts = {}) {
         continue;
       }
 
-      const rules = loadRecentRules(10);
       const backend = String(process.env.OWA_AGENT_BACKEND || "auto").toLowerCase();
       const useVision = backend === "claude" || backend === "anthropic" || backend === "auto";
 
@@ -259,7 +218,7 @@ async function runAgentTask(rawTask, opts = {}) {
       } else {
         // Reactive Mode: Ask LLM for next action
         const historyForPrompt = useVision ? history.slice(-3) : history.slice(-8);
-        const prompt = buildPlannerPrompt(task, step, maxSteps, state, historyForPrompt, rules, false, extractedCount);
+        const prompt = buildPlannerPrompt(task, step, maxSteps, state, historyForPrompt, [], false, extractedCount);
         const screenshot = useVision ? state.screenshot_b64 : "";
 
         if (debug) {
@@ -451,15 +410,6 @@ async function runAgentTask(rawTask, opts = {}) {
           step,
           action: decision.action,
           reason: decision.reason,
-          error: detail,
-          url: state.url,
-        });
-
-        appendRuleCorrection({
-          ts: new Date().toISOString(),
-          task,
-          step,
-          action: decision,
           error: detail,
           url: state.url,
         });
