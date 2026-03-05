@@ -15,6 +15,8 @@ const { buildPlannerPrompt } = core.promptBuilder;
 const { executeDecision } = core.executor;
 const { generatePlan, canExecutePlan, replan } = core.taskPlanner;
 const { generateConclusion } = core.conclusionGenerator;
+const { analyzeTask } = core.taskAnalyzer;
+const { COMMON_SITES, buildSearchUrl, getBrowseUrl, getSiteConfig } = core.siteConfig;
 
 // Generate unique task ID for this execution
 function generateTaskId() {
@@ -87,6 +89,22 @@ async function runAgentTask(rawTask, opts = {}) {
     page.setDefaultTimeout(12000);
     logProgress(progress, `task started: ${task}`);
 
+    // ===== Step 0: Task Analysis =====
+    logProgress(progress, "analyzing task intent...");
+    const taskAnalysis = await analyzeTask(task, COMMON_SITES);
+
+    // Print complete analysis result
+    logProgress(progress, "");
+    logProgress(progress, "=== Task Analysis Result ===");
+    logProgress(progress, `Intent: ${taskAnalysis.intent} (${taskAnalysis.intent === "search" ? "明确搜索" : "漫无目的浏览"})`);
+    logProgress(progress, `Target Site: ${taskAnalysis.target_site || "unknown"}`);
+    if (taskAnalysis.keywords && taskAnalysis.keywords.length > 0) {
+      logProgress(progress, `Keywords: ${taskAnalysis.keywords.join(", ")}`);
+    }
+    logProgress(progress, `Goal: ${taskAnalysis.goal}`);
+    logProgress(progress, "===========================");
+    logProgress(progress, "");
+
     // Planning Mode: Generate complete plan first
     let executionPlan = null;
     if (usePlanningMode) {
@@ -149,38 +167,71 @@ async function runAgentTask(rawTask, opts = {}) {
 
       logProgress(progress, `step ${step}/${maxSteps} url=${state.url || "about:blank"} planning...`);
 
-      if (step === 1 && !String(state.url || "").startsWith("about:blank")) {
-        logProgress(progress, `cleaning browser state from ${state.url}`);
-        await page.goto("about:blank");
-        await page.waitForTimeout(300);
+      // ===== Step 1: Initial Navigation Based on Task Analysis =====
+      if (step === 1 && String(state.url || "").startsWith("about:blank")) {
+        let initialUrl;
+        const domain = taskAnalysis.target_site;
 
-        const seedUrl = guessSeedUrl(task);
-        logProgress(progress, `seed navigation -> ${seedUrl}`);
-        await page.goto(seedUrl, { waitUntil: "domcontentloaded", timeout: 90000 });
+        if (taskAnalysis.intent === "search" && domain && taskAnalysis.keywords.length > 0) {
+          // Search mode: construct search URL with keywords
+          initialUrl = buildSearchUrl(domain, taskAnalysis.keywords);
+
+          if (!initialUrl) {
+            // Fallback to browse URL if search URL not configured
+            initialUrl = getBrowseUrl(domain);
+            logProgress(progress, `site doesn't support URL search, fallback to browse: ${initialUrl}`);
+          } else {
+            logProgress(progress, `search mode: ${initialUrl}`);
+          }
+
+        } else if (taskAnalysis.intent === "browse" && domain) {
+          // Browse mode: use configured browse URL
+          initialUrl = getBrowseUrl(domain);
+          logProgress(progress, `browse mode: ${initialUrl}`);
+
+        } else {
+          // Fallback: use old guessSeedUrl logic
+          initialUrl = guessSeedUrl(task);
+          logProgress(progress, `fallback mode: ${initialUrl}`);
+        }
+
+        // Navigate to initial URL
+        await page.goto(initialUrl, { waitUntil: "domcontentloaded", timeout: 90000 });
+
+        // Handle login modal if configured
+        const siteConfig = getSiteConfig(initialUrl);
+        if (siteConfig?.selectors?.login_modal) {
+          try {
+            const modalVisible = await page.locator(siteConfig.selectors.login_modal).isVisible({ timeout: 2000 });
+            if (modalVisible && siteConfig.selectors.login_close_button) {
+              await page.locator(siteConfig.selectors.login_close_button).click();
+              logProgress(progress, "closed login modal");
+              await page.waitForTimeout(500);
+            }
+          } catch (err) {
+            // No modal or close failed, continue
+          }
+        }
+
         history.push({
           step,
           action: "goto",
-          reason: "seed_navigation_after_cleanup",
-          note: `cleaned state, then goto ${seedUrl}`,
-          url: "about:blank",
+          reason: `${taskAnalysis.intent}_navigation`,
+          note: `${taskAnalysis.intent} mode, navigating to ${initialUrl}`,
+          url: state.url || "about:blank",
+          analysis: taskAnalysis
         });
+
         await page.waitForTimeout(600);
         loopDetector.reset();
         continue;
       }
 
-      if (step === 1 && String(state.url || "").startsWith("about:blank")) {
-        const seedUrl = guessSeedUrl(task);
-        logProgress(progress, `seed navigation -> ${seedUrl}`);
-        await page.goto(seedUrl, { waitUntil: "domcontentloaded", timeout: 90000 });
-        history.push({
-          step,
-          action: "goto",
-          reason: "seed_navigation",
-          note: `goto ${seedUrl}`,
-          url: state.url || "about:blank",
-        });
-        await page.waitForTimeout(600);
+      // Clean browser state if not starting from blank
+      if (step === 1 && !String(state.url || "").startsWith("about:blank")) {
+        logProgress(progress, `cleaning browser state from ${state.url}`);
+        await page.goto("about:blank");
+        await page.waitForTimeout(300);
         loopDetector.reset();
         continue;
       }
@@ -219,8 +270,10 @@ async function runAgentTask(rawTask, opts = {}) {
       } else {
         // Reactive Mode: Ask LLM for next action
         const historyForPrompt = useVision ? history.slice(-3) : history.slice(-8);
-        const prompt = buildPlannerPrompt(task, step, maxSteps, state, historyForPrompt, [], false, extractedCount);
-        const screenshot = useVision ? state.screenshot_b64 : "";
+        const prompt = buildPlannerPrompt(task, step, maxSteps, state, historyForPrompt, false, taskAnalysis);
+
+        // Disable screenshot to reduce cost and latency
+        const screenshot = "";
 
         if (debug) {
           process.stderr.write(`[agent] step=${step} screenshot_b64_length=${state.screenshot_b64?.length || 0} screenshot_path=${state.screenshot_path}\n`);

@@ -11,6 +11,12 @@ module.exports = {
   // Site resolution
   siteResolver: require("./site-resolver"),
 
+  // Site configuration
+  siteConfig: require("./site-config"),
+
+  // Task analysis
+  taskAnalyzer: require("./task-analyzer"),
+
   // Browser control
   browser: require("./browser"),
 
