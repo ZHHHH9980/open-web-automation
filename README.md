@@ -1,136 +1,258 @@
 # Open Web Automation
 
-面向真实账号场景的网页自动化项目（Chrome CDP + Playwright）。
+## 核心功能
 
-> 独立仓库，不与 AutoGLM 代码混放：`ZHHHH9980/open-web-automation`
+面向真实账号场景的网页自动化工具，通过 LLM Agent + Chrome CDP + Playwright 实现智能网页操作。
 
-## 架构总览
+**主要能力**：
+- 自然语言驱动的网页自动化
+- 视觉识别 + DOM 操作混合模式
+- 支持登录态、验证码、人机验证场景
+- 自动提取和总结网页内容
 
-```text
-Human / TG Bot
-   -> Planner (NL -> JSON 指令)
-   -> run-unified-task.js (统一入口)
-   -> automation-web/engine.js (路由 + 超时 + 结果收敛)
-   -> automation-web/workflows/* (站点工作流)
-   -> Unified JSON Result
+## 架构设计
 
-E2E: automation-web/harness/run-e2e.js
-   -> 30+ 真实 case 批测
-   -> 人机验证自动 skip（不中断整批）
+### 任务拆解流程
+
+**核心思想**：将自然语言任务拆解为原子化的 actions，结合平台特定逻辑执行。
+
+#### 1. 任务分析（Phase 1: Analysis）
+
+**Actions 链条示例**：
+
+任务："打开知乎帮我找我关注的博主梦中的桃花源，返回第一篇文章"
+
+```
+goto (zhihu.com)
+  -> type ("梦中的桃花源" into search input)
+  -> wait (1500ms for results)
+  -> click (博主主页链接)
+  -> wait (1000ms for page load)
+  -> click (第一篇文章)
+  -> extract (article content from .RichContent-inner)
+  -> back (to 博主主页)
+  -> done
 ```
 
-## 目录结构
+#### 2. 原子化 Actions（Phase 2: Execution）
 
-```text
-.
-├── run-unified-task.js              # 仓库统一入口
-├── automation-web/
-│   ├── engine.js                    # 执行引擎（路由/超时/关闭策略）
-│   ├── core/
-│   │   ├── input.js                 # 输入协议（仅 JSON）
-│   │   ├── browser.js               # CDP 连接、tab 复用、截图
-│   │   └── result.js                # 统一输出协议 + 人机验证识别
-│   ├── workflows/
-│   │   ├── google.js
-│   │   ├── zhihu.js
-│   │   └── xiaohongshu.js
-│   ├── harness/
-│   │   ├── cases.json               # 30 个真实 case
-│   │   └── run-e2e.js               # 批测执行与报告生成
-│   └── run-web-task.js              # automation-web 内部入口
+**可用的原子 actions**：
+- `goto` - 导航到 URL
+- `click` - 点击元素（坐标或选择器）
+- `type` - 输入文本（自动按 Enter）
+- `press` - 按键（Enter/Escape/Tab 等）
+- `scroll` - 滚动页面
+- `wait` - 等待（时间或条件）
+- `back` - 返回上一页
+- `extract` - 提取内容
+- `done` - 任务完成
+- `fail` - 任务失败
+- `pause` - 暂停（需要人工介入）
+
+#### 3. 平台化 Actions（Platform-Specific Logic）
+
+**平台配置系统**自动注入平台特定逻辑：
+
+**小红书（Modal 模式）**：
+- 点击文章 → 打开弹窗
+- 提取内容 → 使用 `.note-content` 选择器
+- 返回列表 → 点击关闭按钮（不能用 back）
+
+**知乎（Page 模式）**：
+- 点击文章 → 跳转新页面
+- 提取内容 → 使用 `.RichContent-inner` 选择器
+- 返回列表 → 使用 back 动作
+
+### 站点识别策略
+
+1. **硬编码常用站点**（优先级最高）
+   - B站、知乎、小红书、闲鱼、淘宝、拼多多等
+   - 定义在 `learning/system.js` 的 `COMMON_SITES`
+
+2. **Google 搜索兜底**
+   - 未匹配到站点时自动 Google 搜索
+
+### 平台配置系统
+
+**平台差异**：
+- 知乎（Page 模式）：`click (article) -> extract (content) -> back (to list)`
+- 小红书（Modal 模式）：`click (article) -> extract (content) -> click (close button)`
+
+**交互模式**：
+- **Modal 模式**（如小红书）：点击打开弹窗，点击关闭按钮返回
+- **Page 模式**（如知乎）：点击跳转新页面，使用 back 返回
+- **SPA 模式**：单页应用，URL 变化但不刷新页面
+
+**配置内容**：
+- **workflows**：预定义的工作流
+- **selectors**：选择器配置
+- **special_behaviors**：特殊行为说明
+- **agent_hints**：Agent 提示
+
+## 配置方式
+
+### 1. 首次配置（一次性）
+
+```bash
+# 启动 Chrome（开启 CDP 端口 9222）
+./start-chrome.sh
+```
+
+### 2. 日常使用
+
+```bash
+# Agent 模式（自然语言）
+node automation-web/run-agent-task.js "去小红书搜索 openclaw，返回前 3 篇文章"
+```
+
+### 3. 环境变量
+
+```bash
+# Agent 配置
+OWA_AGENT_MAX_STEPS=15          # 最大步骤数
+OWA_AGENT_DEBUG=1               # 打印调试信息
+OWA_AGENT_PLANNING_MODE=1       # 启用规划模式
+OWA_AGENT_CODEX_MODEL=...       # 指定模型
+
+# 浏览器配置
+WEB_KEEP_OPEN=1                 # 任务完成后保持浏览器打开
+WEB_KEEP_OPEN_ON_HUMAN=1        # 触发人机验证时保持打开
+WEB_TASK_TIMEOUT_MS=180000      # 任务超时时间（3分钟）
+WEB_NO_SCREENSHOT=1             # 禁用截图
+```
+
+## 关键设计思想
+
+### 1. Agent 优先，最小化硬编码
+
+**核心理念**：
+- 所有分析、决策由 LLM Agent 负责
+- 代码只负责基础设施（浏览器控制、协议定义）
+- 业务逻辑由 Agent 动态生成
+
+### 2. 三层 Actions 抽象
+
+**原子 Actions** → **平台化 Actions** → **任务级 Actions**
+
+- **原子层**：goto/click/type/press/scroll/wait/back/extract/done
+- **平台层**：workflows（搜索流程、导航方式、内容提取）
+- **任务层**：高层次步骤（"搜索"、"提取"）
+
+### 3. Vision-First 策略
+
+- 优先使用坐标点击（基于截图的视觉识别）
+- 平台配置提供选择器时使用选择器（更准确）
+- 截图使用 JPEG quality=20 降低成本
+
+### 4. 平台感知
+
+- 自动识别网站交互模式（Modal/Page/SPA）
+- 根据平台配置调整 Agent 行为
+- 提供平台特定的 workflows 和 selectors
+
+### 5. 容错设计
+
+- 循环检测：防止 Agent 陷入无限循环
+- 超时保护：单任务 3 分钟超时
+- 人机验证识别：`meta.requires_human=true`
+- 错误自动记录：`adapter/rules/auto-corrections.jsonl`
+- Replanning：执行失败时自动重新规划
+
+## 数据流
+
+```
+用户任务（自然语言）
+  ↓
+Phase 1: Analysis（任务分析）
+  → 识别目标站点
+  → 生成 Actions 链条
+  ↓
+站点识别（硬编码 COMMON_SITES / Google）
+  ↓
+加载平台配置（platforms/*.js）
+  → workflows, selectors, special_behaviors
+  ↓
+Phase 2: Execution（原子化执行，最多 15 步）
+  ├─ 截图（JPEG quality=20）
+  ├─ 提取 DOM 候选元素
+  ├─ 应用平台配置
+  ├─ LLM 决策（action + 参数）
+  ├─ 执行原子 action
+  └─ 循环检测
+  ↓
+Phase 3: Verification（结果验证）
+  → 验证任务目标
+  ↓
+生成总结（Conclusion）
+  → summary + links
+  ↓
+返回结果（JSON）
 ```
 
 ## 输入输出协议
 
-- 输入：只接收 JSON（不再做正则/槽位意图解析）
-- 输出字段：`success` `message` `has_screenshot` `screenshot` `exit_code` `timestamp` `meta`
-- `meta.requires_human=true`：表示触发登录/验证码/风控，需要人工接管
-
-示例：
+### 输入
 
 ```bash
-node run-unified-task.js '{"site":"zhihu","action":"latest_answer","creator":"梦中的桃花源"}'
-node run-unified-task.js '{"site":"zhihu","action":"search_top_answer","query":"Openclaw"}'
-node run-unified-task.js '{"site":"xiaohongshu","action":"search_notes","query":"Openclaw 总结 10个用法","limit":10}'
+node automation-web/run-agent-task.js "去小红书搜索 openclaw，返回前 3 篇文章"
 ```
 
-## 稳定性与约束
+### 输出
 
-- 单任务默认 3 分钟超时：`WEB_TASK_TIMEOUT_MS=180000`
-- 默认复用已连接 Chrome（CDP `127.0.0.1:9222`）
-- 批测遇到站点风控会自动降级：该站点后续 case 直接 skip，避免阻塞
-- E2E 目标：允许失败，不允许卡死
+```json
+{
+  "success": true,
+  "message": "任务完成",
+  "exit_code": 0,
+  "meta": {
+    "url": "https://...",
+    "steps": [...],
+    "duration": 30000,
+    "requires_human": false,
+    "extracted": [...],
+    "conclusion": {
+      "summary": "...",
+      "links": [...]
+    }
+  }
+}
+```
 
-## 本地运行
+## 添加新平台
 
 ```bash
-cd automation-web
-npm install
+# 1. 复制模板
+cp automation-web/platforms/_template.js automation-web/platforms/newsite.js
+
+# 2. 编辑配置
+# - domain: 域名
+# - interaction: 交互模式（modal/page/spa）
+# - workflows: 预定义工作流
+# - selectors: 选择器配置
+# - special_behaviors: 特殊行为
+# - agent_hints: Agent 提示
+
+# 3. 测试
+node automation-web/run-agent-task.js "在新网站搜索测试"
 ```
 
-确保 Chrome 已开启 9222：
+## 性能特征
 
-```bash
-open -a "Google Chrome" --args --remote-debugging-port=9222
-```
+- **启动速度**：硬编码常用站点，零学习成本
+- **容错性**：Agent 自我纠错 + Replanning + Google 兜底
+- **成本**：~$0.30/任务（多次 LLM + 截图）
+- **扩展性**：通过平台配置快速支持新网站
 
-执行单任务：
+## 适用场景
 
-```bash
-cd ..
-node run-unified-task.js '{"site":"google","action":"search","query":"OpenClaw","limit":5}'
-```
+✅ **适合**：
+- 需要登录态的真实账号操作
+- 复杂的多步骤网页任务
+- 需要内容提取和总结
+- 动态页面、SPA 应用
+- Modal 弹窗交互
 
-执行 30 case E2E：
-
-```bash
-cd automation-web
-npm run e2e
-```
-
-报告目录：`automation-web/harness/reports/<timestamp>/`
-
-## LLM Agent 适配器（本机 CDP）
-
-`adapter/run-routed-task.js` 现在是 LLM-first 模式：
-
-- 输入只需要自然语言任务
-- Codex 每一步根据页面状态输出结构化动作（goto/click/type/press/...）
-- 执行器负责白名单动作执行、重试与超时
-- 默认走本机 CDP（`127.0.0.1:9222`）
-
-示例：
-
-```bash
-node adapter/run-routed-task.js '我要去知乎看 DeepVan 的最新回答'
-node adapter/run-routed-task.js '去闲鱼 淘宝 拼多多 比价 iPhone 15 128G'
-```
-
-适配器默认注入：
-
-- `WEB_KEEP_OPEN=0`
-- `WEB_KEEP_OPEN_ON_HUMAN=1`
-- `WEB_MAX_DOMAIN_TABS=2`
-- `WEB_TASK_TIMEOUT_MS=180000`
-
-### 本机 profile 副本模式
-
-运行适配器时会先执行 `adapter/start-local-cdp.sh`（可用 `OWA_LOCAL_CDP_BOOTSTRAP=0` 关闭）：
-
-- 从 Chrome 正式 profile 同步副本目录（默认 `Profile 4` -> `~/chrome-agent-profile-p4`）
-- 用副本目录启动 `9222`，避免打断日常工作窗口
-
-可选参数：
-
-```bash
-OWA_LOCAL_PROFILE_NAME='Profile 1' \
-OWA_LOCAL_PROFILE_CLONE_DIR="$HOME/chrome-agent-profile-p1" \
-node adapter/run-routed-task.js '去知乎看某人的回答'
-```
-
-可选 Agent 环境变量：
-
-- `OWA_AGENT_CODEX_MODEL`（Codex 模型）
-- `OWA_AGENT_MAX_STEPS`（默认 `15`）
-- `OWA_AGENT_CANDIDATE_LIMIT`（默认 `60`）
-- `OWA_AGENT_DEBUG=1`（打印每一步动作）
+❌ **不适合**：
+- 简单的 API 调用
+- 需要毫秒级响应的场景
+- 大规模批量爬取（成本高）
