@@ -4,6 +4,12 @@
   "version": "0.2.0",
   "description": "Web automation runner via Playwright CDP",
   "main": "run-web-task.js",
+  "license": "UNLICENSED",
+  "author": "",
+  "repository": {
+    "type": "git",
+    "url": "file:///Users/a1/Documents/open-web-automation/automation-web"
+  },
   "scripts": {
     "run": "node run-web-task.js",
     "e2e": "node harness/run-e2e.js"
