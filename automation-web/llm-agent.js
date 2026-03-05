@@ -6,7 +6,7 @@ const os = require("os");
 
 const { connectBrowser, getAutomationPage, makeScreenshot, markHumanPauseTab } = require("./core/browser");
 const { toResult } = require("./core/result");
-const { guessSeedUrl: guessSeedUrlFromLearning } = require("./learning/system");
+const { guessSeedUrl: guessSeedUrlFromResolver } = require("./core/site-resolver");
 const { LoopDetector } = require("./core/loop-detector");
 const { runPlanner } = require("./planners");
 const { collectPageState } = require("./core/state-collector");
@@ -40,7 +40,7 @@ function logProgress(enabled, msg) {
 }
 
 function guessSeedUrl(task) {
-  return guessSeedUrlFromLearning(task);
+  return guessSeedUrlFromResolver(task);
 }
 
 async function runAgentTask(rawTask, opts = {}) {
