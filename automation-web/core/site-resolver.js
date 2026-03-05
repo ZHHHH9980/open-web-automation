@@ -49,6 +49,30 @@ function guessSeedUrl(task) {
   return `https://www.google.com/search?q=${searchQuery}&btnI=1`;
 }
 
+/**
+ * 判断 URL 是否被管理
+ */
+function isManagedUrl(url) {
+  const u = String(url || "");
+
+  // 特殊 URL 始终管理
+  if (
+    u.startsWith("about:blank") ||
+    u.startsWith("chrome://newtab") ||
+    u.startsWith("chrome-error://")
+  ) {
+    return true;
+  }
+
+  // 检查硬编码站点
+  for (const domain of Object.values(COMMON_SITES)) {
+    if (u.includes(domain)) return true;
+  }
+
+  return false;
+}
+
 module.exports = {
   guessSeedUrl,
+  isManagedUrl,
 };

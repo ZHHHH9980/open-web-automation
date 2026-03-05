@@ -3,7 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { isManagedUrl: isManagedUrlFromLearning } = require("../learning/system");
+const { isManagedUrl: isManagedUrlFromResolver } = require("./site-resolver");
 
 async function safeClickByText(page, textList) {
   for (const text of textList) {
@@ -72,8 +72,7 @@ const AUTO_TAB_NAME = "__OPEN_WEB_AUTOMATION__";
 const HUMAN_TAB_PREFIX = "__OPEN_WEB_AUTOMATION_HUMAN__";
 
 function isManagedUrl(url) {
-  // 使用学习系统
-  return isManagedUrlFromLearning(url);
+  return isManagedUrlFromResolver(url);
 }
 
 async function readWindowNameSafe(page) {
