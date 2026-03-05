@@ -4,16 +4,17 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
-const { connectBrowser, getAutomationPage, makeScreenshot, markHumanPauseTab } = require("./core/browser");
-const { toResult } = require("./core/result");
-const { guessSeedUrl: guessSeedUrlFromResolver } = require("./core/site-resolver");
-const { LoopDetector } = require("./core/loop-detector");
+const core = require("./core");
+const { connectBrowser, getAutomationPage, makeScreenshot, markHumanPauseTab } = core.browser;
+const { toResult } = core.result;
+const { guessSeedUrl: guessSeedUrlFromResolver } = core.siteResolver;
+const { LoopDetector } = core.loopDetector;
 const { runPlanner } = require("./planners");
-const { collectPageState } = require("./core/state-collector");
-const { buildPlannerPrompt } = require("./core/prompt-builder");
-const { executeDecision } = require("./core/executor");
-const { generatePlan, canExecutePlan, replan } = require("./core/task-planner");
-const { generateConclusion } = require("./core/conclusion-generator");
+const { collectPageState } = core.stateCollector;
+const { buildPlannerPrompt } = core.promptBuilder;
+const { executeDecision } = core.executor;
+const { generatePlan, canExecutePlan, replan } = core.taskPlanner;
+const { generateConclusion } = core.conclusionGenerator;
 
 // Generate unique task ID for this execution
 function generateTaskId() {
