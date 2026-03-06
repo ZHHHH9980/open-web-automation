@@ -70,11 +70,7 @@ async function executeDecision(page, decision, state) {
     return { done: false, note: `press ${key}` };
   }
 
-  if (action === "scroll") {
-    const px = Number.isFinite(Number(decision.scroll_px)) ? Number(decision.scroll_px) : 900;
-    await page.mouse.wheel(0, px);
-    return { done: false, note: `scroll ${px}` };
-  }
+  // Scroll action removed - use selectors to extract content directly
 
   if (action === "wait") {
     const ms = Number.isFinite(Number(decision.wait_ms)) ? toInt(decision.wait_ms, 1200) : 1200;
@@ -150,6 +146,46 @@ async function executeDecision(page, decision, state) {
         full_length: fullLength,
       },
       note: `extract ${label}`,
+    };
+  }
+
+  if (action === "collect") {
+    // Collect list items from container
+    const containerSelector = decision.selector || resolveSelector(decision, state);
+    if (!containerSelector) throw new Error("collect requires selector or valid target_id");
+
+    const itemSelector = decision.item_selector || "> *";
+    const maxItems = Number.isFinite(Number(decision.max_items)) ? Number(decision.max_items) : 50;
+
+    const results = await page.evaluate(({ container, item, max }) => {
+      const containerEl = document.querySelector(container);
+      if (!containerEl) return [];
+
+      const items = Array.from(containerEl.querySelectorAll(item)).slice(0, max);
+      return items.map(section => {
+        // Extract all links
+        const links = Array.from(section.querySelectorAll("a")).map(a => ({
+          href: a.href,
+          text: a.innerText?.trim() || ""
+        }));
+
+        // Extract full text content
+        const fullText = section.innerText?.trim() || "";
+
+        return {
+          links,
+          fullText
+        };
+      });
+    }, { container: containerSelector, item: itemSelector, max: maxItems });
+
+    return {
+      done: false,
+      data: {
+        items: results,
+        count: results.length
+      },
+      note: `collect ${results.length} items from ${containerSelector}`
     };
   }
 
