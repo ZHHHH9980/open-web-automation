@@ -4,77 +4,152 @@ const { runPlanner } = require("../planners");
 
 /**
  * Generate a complete execution plan for the task
+ * Now includes task analysis in the same LLM call
+ * Can work without page state (before opening browser)
  * @param {string} task - User task description
- * @param {object} state - Current page state
+ * @param {object|null} state - Current page state (null if before opening browser)
  * @param {number} maxSteps - Maximum steps allowed
- * @returns {Promise<{ok: boolean, plan?: Array, error?: string}>}
+ * @param {object} commonSites - Map of common site keywords to domains
+ * @returns {Promise<{ok: boolean, analysis?: object, plan?: Array, error?: string}>}
  */
-async function generatePlan(task, state, maxSteps = 15) {
-  const prompt = buildPlanningPrompt(task, state, maxSteps);
+async function generatePlan(task, state, maxSteps = 15, commonSites = {}) {
+  const prompt = buildPlanningPrompt(task, state, maxSteps, commonSites);
 
-  // Use planner to generate plan
-  const result = await runPlanner(prompt, null, state.screenshot_b64);
+  // Use planner to generate analysis + plan (no screenshot if state is null)
+  const result = await runPlanner(prompt, null, state?.screenshot_b64 || null);
 
   if (!result.ok) {
-    return { ok: false, error: result.error };
+    // Even if planner failed, try to return the decision if available
+    return { ok: false, error: result.error, rawPlan: result.decision || null };
   }
+
+  // Extract analysis and plan
+  const analysis = result.decision?.analysis || null;
+  const plan = result.decision?.plan || [];
 
   // Validate plan structure
-  const plan = result.decision?.plan || [];
   if (!Array.isArray(plan) || plan.length === 0) {
-    return { ok: false, error: "Invalid plan structure" };
+    return { ok: false, error: "Invalid plan structure", rawPlan: result.decision };
   }
 
-  return { ok: true, plan };
+  return { ok: true, analysis, plan, rawPlan: result.decision };
 }
 
 /**
  * Build prompt for planning mode
+ * Now includes task analysis + execution plan in one LLM call
+ * Works with or without page state
  */
-function buildPlanningPrompt(task, state, maxSteps) {
-  const payload = {
-    task,
-    max_steps: maxSteps,
-    current_url: state.url,
-    page_title: state.title,
-    body_text: state.body_text,
-    candidates: state.candidates,
-    site_hints: state.site_hints || {},
-  };
+function buildPlanningPrompt(task, state, maxSteps, commonSites = {}) {
+  const siteList = Object.entries(commonSites)
+    .map(([keyword, domain]) => `  - ${keyword}: ${domain}`)
+    .join("\n");
+
+  const hasPageState = state && state.url;
 
   const promptLines = [
-    "You are a web automation planner. Your job is to analyze the task and generate a complete execution plan.",
+    "You are a web automation planner. Analyze the task and generate a complete execution plan.",
     "",
-    "IMPORTANT: You must output a JSON object with a 'plan' array containing ALL steps needed.",
+    "=== STEP 1: Task Analysis ===",
+    "First, understand what the user wants:",
+    "- Intent: search (明确搜索) or browse (漫无目的浏览)?",
+    "- Target site: Which website? (use domain from reference if mentioned)",
+    "- Keywords: What search terms? (only for search intent)",
+    "- Goal: What is the user trying to achieve?",
     "",
-    "Available actions: goto, click, type, press, scroll, wait, back, done, fail, pause",
+    "Common Sites Reference:",
+    siteList,
     "",
-    "Task Analysis Guidelines:",
-    "1. Break down the task into atomic steps",
-    "2. Consider the current page state",
-    "3. Plan for navigation, interaction, and data extraction",
-    "4. Include 'done' as the final step",
+    "=== STEP 2: Execution Plan ===",
+    "Then, break down into atomic actions:",
     "",
-    "Output Format:",
+    "Available actions:",
+    "- Navigation: goto, back",
+    "- Interaction: click, type, press, wait",
+    "- Data: extract (single item), collect (list items)",
+    "- Control: close (close modal/popup), done, fail, pause",
+    "",
+    "Action Guidelines:",
+    "1. For goto: specify full URL",
+    "2. For search: use type with press_enter parameter",
+    "3. For extraction: use extract action with descriptive label",
+    "4. For list tasks (e.g., 'first 3 articles', 'top 5 results'):",
+    "   - Use collect to get all list items as JSON",
+    "   - Specify max_items parameter (e.g., max_items: 3)",
+    "   - Then click each item based on collected data",
+    "   - Extract content from detail pages",
+    "   Pattern: collect → click item 1 → extract → back → click item 2 → extract → back → ...",
+    "5. Use placeholder target_id (will be filled during execution)",
+    "6. Final step must be 'done'",
+    "",
+  ];
+
+  if (hasPageState) {
+    promptLines.push(
+      "Current Page State:",
+      `URL: ${state.url}`,
+      `Title: ${state.title}`,
+      `Candidates: ${state.candidates?.length || 0} interactive elements`,
+      ""
+    );
+  } else {
+    promptLines.push(
+      "Note: Browser not yet opened. Generate plan based on task description only.",
+      "Use generic actions without specific target_id (will be determined during execution).",
+      ""
+    );
+  }
+
+  promptLines.push(
+    "=== Output Format ===",
     "{",
+    '  "analysis": {',
+    '    "intent": "search" | "browse",',
+    '    "target_site": "xiaohongshu.com" | null,',
+    '    "keywords": ["keyword1"],',
+    '    "goal": "brief description"',
+    "  },",
     '  "plan": [',
-    '    {"step": 1, "action": "goto", "url": "...", "reason": "..."},',
-    '    {"step": 2, "action": "type", "target_id": 5, "text": "...", "reason": "..."},',
-    '    {"step": 3, "action": "scroll", "scroll_px": 900, "reason": "..."},',
-    '    {"step": 4, "action": "done", "result": "...", "reason": "..."}',
+    '    {"step": 1, "action": "goto", "url": "https://...", "reason": "..."},',
+    '    {"step": 2, "action": "type", "text": "...", "press_enter": true, "reason": "..."},',
+    '    {"step": 3, "action": "collect", "max_items": 3, "reason": "collect first 3 items from list"},',
+    '    {"step": 4, "action": "click", "reason": "click first article from collected list"},',
+    '    {"step": 5, "action": "extract", "label": "article_1_content", "reason": "..."},',
+    '    {"step": 6, "action": "back", "reason": "return to list"},',
+    '    {"step": 7, "action": "done", "result": "...", "reason": "..."}',
     "  ]",
     "}",
     "",
     "Rules:",
-    "- Each step must have: step (number), action (string), reason (string)",
+    "- analysis.intent must be 'search' or 'browse'",
+    "- analysis.target_site should be domain only (e.g., 'xiaohongshu.com')",
+    "- Each plan step must have: step, action, reason",
     "- Include all necessary parameters for each action",
-    "- The 'type' action automatically presses Enter",
-    "- Use 'back' to return to previous page",
+    "- NO scroll action (use selectors to extract content directly)",
+    "- For list tasks: use collect with max_items, then click/extract each item",
+    "- For click/type actions without page state, omit target_id (will be added during execution)",
     "- Final step must be 'done' with result summary",
-    "",
-    "Current State:",
-    JSON.stringify(payload, null, 2),
-  ];
+    ""
+  );
+
+  if (hasPageState) {
+    promptLines.push(
+      "Page Content:",
+      JSON.stringify({
+        task,
+        max_steps: maxSteps,
+        current_url: state.url,
+        page_title: state.title,
+        body_text: state.body_text?.slice(0, 2000) || "",
+        candidates: state.candidates,
+      }, null, 2)
+    );
+  } else {
+    promptLines.push(
+      "Task:",
+      JSON.stringify({ task, max_steps: maxSteps }, null, 2)
+    );
+  }
 
   return promptLines.join("\n");
 }

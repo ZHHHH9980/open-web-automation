@@ -15,7 +15,7 @@ const { buildPlannerPrompt } = core.promptBuilder;
 const { executeDecision } = core.executor;
 const { generatePlan, canExecutePlan, replan } = core.taskPlanner;
 const { generateConclusion } = core.conclusionGenerator;
-const { analyzeTask } = core.taskAnalyzer;
+const { quickAnalyzeTask } = core.taskAnalyzer;
 const { COMMON_SITES, buildSearchUrl, getBrowseUrl, getSiteConfig } = core.siteConfig;
 
 // Generate unique task ID for this execution
@@ -83,31 +83,142 @@ async function runAgentTask(rawTask, opts = {}) {
   const loopDetector = new LoopDetector();
 
   try {
+    // ===== Step 1: Analyze task and generate execution plan (BEFORE opening browser) =====
+    logProgress(progress, `task started: ${task}`);
+    logProgress(progress, "analyzing task and generating execution plan...");
+
+    const planResult = await generatePlan(task, null, maxSteps, COMMON_SITES);
+
+    let executionPlan = null;
+    let taskAnalysis = null;
+
+    if (planResult.ok) {
+      executionPlan = planResult.plan;
+      taskAnalysis = planResult.analysis;
+
+      // Display task analysis
+      if (taskAnalysis) {
+        logProgress(progress, "");
+        logProgress(progress, "=== Task Analysis ===");
+        logProgress(progress, `Intent: ${taskAnalysis.intent} (${taskAnalysis.intent === "search" ? "明确搜索" : "漫无目的浏览"})`);
+        logProgress(progress, `Target Site: ${taskAnalysis.target_site || "unknown"}`);
+        if (taskAnalysis.keywords && taskAnalysis.keywords.length > 0) {
+          logProgress(progress, `Keywords: ${taskAnalysis.keywords.join(", ")}`);
+        }
+        logProgress(progress, `Goal: ${taskAnalysis.goal || task}`);
+        logProgress(progress, "====================");
+      }
+
+      // Display execution plan
+      logProgress(progress, "");
+      logProgress(progress, "=== Execution Plan ===");
+      executionPlan.forEach((step, idx) => {
+        const actionDesc = step.action === "type" ? `${step.action} "${step.text}"` :
+                          step.action === "goto" ? `${step.action} ${step.url}` :
+                          step.action === "click" ? `${step.action}` :
+                          step.action === "extract" ? `${step.action} (label: ${step.label || "N/A"})` :
+                          step.action;
+        logProgress(progress, `  ${idx + 1}. ${actionDesc}`);
+        logProgress(progress, `     └─ ${step.reason}`);
+      });
+      logProgress(progress, "======================");
+      logProgress(progress, "");
+    } else {
+      // Even if validation failed, try to show raw analysis and plan
+      if (planResult.rawPlan?.analysis) {
+        taskAnalysis = planResult.rawPlan.analysis;
+        logProgress(progress, "");
+        logProgress(progress, "=== Task Analysis (validation failed, showing raw) ===");
+        logProgress(progress, `Intent: ${taskAnalysis.intent} (${taskAnalysis.intent === "search" ? "明确搜索" : "漫无目的浏览"})`);
+        logProgress(progress, `Target Site: ${taskAnalysis.target_site || "unknown"}`);
+        if (taskAnalysis.keywords && taskAnalysis.keywords.length > 0) {
+          logProgress(progress, `Keywords: ${taskAnalysis.keywords.join(", ")}`);
+        }
+        logProgress(progress, `Goal: ${taskAnalysis.goal || task}`);
+        logProgress(progress, "======================================================");
+      }
+
+      if (planResult.rawPlan?.plan && Array.isArray(planResult.rawPlan.plan)) {
+        logProgress(progress, "");
+        logProgress(progress, "=== Execution Plan (validation failed, showing raw) ===");
+        planResult.rawPlan.plan.forEach((step, idx) => {
+          const actionDesc = step.action === "type" ? `${step.action} "${step.text}"` :
+                            step.action === "goto" ? `${step.action} ${step.url}` :
+                            step.action === "click" ? `${step.action}` :
+                            step.action === "extract" ? `${step.action} (label: ${step.label || "N/A"})` :
+                            step.action;
+          logProgress(progress, `  ${idx + 1}. ${actionDesc}`);
+          logProgress(progress, `     └─ ${step.reason || "no reason"}`);
+        });
+        logProgress(progress, "========================================================");
+        logProgress(progress, "");
+      }
+      logProgress(progress, `plan generation failed: ${planResult.error}, using reactive mode`);
+      logProgress(progress, "");
+    }
+
+    // ===== Step 2: Determine initial URL from task analysis =====
+    let initialUrl;
+    if (taskAnalysis) {
+      const domain = taskAnalysis.target_site;
+      if (taskAnalysis.intent === "search" && domain && taskAnalysis.keywords && taskAnalysis.keywords.length > 0) {
+        initialUrl = buildSearchUrl(domain, taskAnalysis.keywords);
+        if (!initialUrl) {
+          initialUrl = getBrowseUrl(domain);
+          logProgress(progress, `site doesn't support URL search, using browse URL`);
+        }
+      } else if (domain) {
+        initialUrl = getBrowseUrl(domain);
+      } else {
+        initialUrl = guessSeedUrl(task);
+      }
+    } else {
+      // Fallback to heuristic
+      const quickAnalysis = quickAnalyzeTask(task, COMMON_SITES);
+      const domain = quickAnalysis.target_site;
+      if (quickAnalysis.intent === "search" && domain && quickAnalysis.keywords.length > 0) {
+        initialUrl = buildSearchUrl(domain, quickAnalysis.keywords);
+        if (!initialUrl) {
+          initialUrl = getBrowseUrl(domain);
+        }
+      } else if (domain) {
+        initialUrl = getBrowseUrl(domain);
+      } else {
+        initialUrl = guessSeedUrl(task);
+      }
+    }
+
+    logProgress(progress, `Initial URL: ${initialUrl}`);
+    logProgress(progress, "");
+
+    // ===== Step 3: Now open browser and navigate =====
+    logProgress(progress, "opening browser...");
     const conn = await connectBrowser(cdpUrl);
     browser = conn.browser;
     page = await getAutomationPage(conn.context);
     page.setDefaultTimeout(12000);
-    logProgress(progress, `task started: ${task}`);
 
-    // ===== Step 0: Task Analysis =====
-    logProgress(progress, "analyzing task intent...");
-    const taskAnalysis = await analyzeTask(task, COMMON_SITES);
+    logProgress(progress, `navigating to ${initialUrl}...`);
+    await page.goto(initialUrl, { waitUntil: "domcontentloaded", timeout: 90000 });
+    await page.waitForTimeout(1000);
 
-    // Print complete analysis result
-    logProgress(progress, "");
-    logProgress(progress, "=== Task Analysis Result ===");
-    logProgress(progress, `Intent: ${taskAnalysis.intent} (${taskAnalysis.intent === "search" ? "明确搜索" : "漫无目的浏览"})`);
-    logProgress(progress, `Target Site: ${taskAnalysis.target_site || "unknown"}`);
-    if (taskAnalysis.keywords && taskAnalysis.keywords.length > 0) {
-      logProgress(progress, `Keywords: ${taskAnalysis.keywords.join(", ")}`);
+    // Handle login modal if configured
+    const siteConfig = getSiteConfig(initialUrl);
+    if (siteConfig?.selectors?.login_modal) {
+      try {
+        const modalVisible = await page.locator(siteConfig.selectors.login_modal).isVisible({ timeout: 2000 });
+        if (modalVisible && siteConfig.selectors.login_close_button) {
+          await page.locator(siteConfig.selectors.login_close_button).click();
+          logProgress(progress, "closed login modal");
+          await page.waitForTimeout(500);
+        }
+      } catch (err) {
+        // No modal or close failed, continue
+      }
     }
-    logProgress(progress, `Goal: ${taskAnalysis.goal}`);
-    logProgress(progress, "===========================");
-    logProgress(progress, "");
 
     // Planning Mode: Generate complete plan first
-    let executionPlan = null;
-    if (usePlanningMode) {
+    if (usePlanningMode && !executionPlan) {
       logProgress(progress, "generating execution plan...");
 
       // Get initial state
@@ -167,68 +278,8 @@ async function runAgentTask(rawTask, opts = {}) {
 
       logProgress(progress, `step ${step}/${maxSteps} url=${state.url || "about:blank"} planning...`);
 
-      // ===== Step 1: Initial Navigation Based on Task Analysis =====
-      if (step === 1 && String(state.url || "").startsWith("about:blank")) {
-        let initialUrl;
-        const domain = taskAnalysis.target_site;
-
-        if (taskAnalysis.intent === "search" && domain && taskAnalysis.keywords.length > 0) {
-          // Search mode: construct search URL with keywords
-          initialUrl = buildSearchUrl(domain, taskAnalysis.keywords);
-
-          if (!initialUrl) {
-            // Fallback to browse URL if search URL not configured
-            initialUrl = getBrowseUrl(domain);
-            logProgress(progress, `site doesn't support URL search, fallback to browse: ${initialUrl}`);
-          } else {
-            logProgress(progress, `search mode: ${initialUrl}`);
-          }
-
-        } else if (taskAnalysis.intent === "browse" && domain) {
-          // Browse mode: use configured browse URL
-          initialUrl = getBrowseUrl(domain);
-          logProgress(progress, `browse mode: ${initialUrl}`);
-
-        } else {
-          // Fallback: use old guessSeedUrl logic
-          initialUrl = guessSeedUrl(task);
-          logProgress(progress, `fallback mode: ${initialUrl}`);
-        }
-
-        // Navigate to initial URL
-        await page.goto(initialUrl, { waitUntil: "domcontentloaded", timeout: 90000 });
-
-        // Handle login modal if configured
-        const siteConfig = getSiteConfig(initialUrl);
-        if (siteConfig?.selectors?.login_modal) {
-          try {
-            const modalVisible = await page.locator(siteConfig.selectors.login_modal).isVisible({ timeout: 2000 });
-            if (modalVisible && siteConfig.selectors.login_close_button) {
-              await page.locator(siteConfig.selectors.login_close_button).click();
-              logProgress(progress, "closed login modal");
-              await page.waitForTimeout(500);
-            }
-          } catch (err) {
-            // No modal or close failed, continue
-          }
-        }
-
-        history.push({
-          step,
-          action: "goto",
-          reason: `${taskAnalysis.intent}_navigation`,
-          note: `${taskAnalysis.intent} mode, navigating to ${initialUrl}`,
-          url: state.url || "about:blank",
-          analysis: taskAnalysis
-        });
-
-        await page.waitForTimeout(600);
-        loopDetector.reset();
-        continue;
-      }
-
-      // Clean browser state if not starting from blank
-      if (step === 1 && !String(state.url || "").startsWith("about:blank")) {
+      // Clean browser state if not starting from blank (skip if we already navigated in planning phase)
+      if (step === 1 && !String(state.url || "").startsWith("about:blank") && !executionPlan) {
         logProgress(progress, `cleaning browser state from ${state.url}`);
         await page.goto("about:blank");
         await page.waitForTimeout(300);

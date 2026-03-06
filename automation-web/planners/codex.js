@@ -4,6 +4,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const { ALLOWED_ACTIONS } = require("../core/constants");
 
 const ROOT = path.resolve(__dirname, "../..");
 const ACTION_SCHEMA_PATH = path.join(ROOT, "adapter", "agent-action.schema.json");
@@ -69,14 +70,21 @@ function runCodexPlanner(prompt, model) {
 
   try {
     const raw = fs.readFileSync(outPath, "utf8").trim();
-    if (!raw) return { ok: false, error: "codex output is empty" };
+    if (!raw) return { ok: false, error: "codex output is empty", decision: null };
     const jsonText = raw.match(/\{[\s\S]*\}/)?.[0] || raw;
     const parsed = JSON.parse(jsonText);
     const decision = validateDecision(parsed);
-    if (!decision) return { ok: false, error: `codex output failed local validation: ${jsonText.replace(/\s+/g, " ").trim().slice(0, 240)}` };
+    if (!decision) {
+      // Return parsed object even if validation failed, so we can display it
+      return {
+        ok: false,
+        error: `codex output failed local validation: ${jsonText.replace(/\s+/g, " ").trim().slice(0, 240)}`,
+        decision: parsed  // Include the raw parsed object
+      };
+    }
     return { ok: true, decision };
   } catch (err) {
-    return { ok: false, error: `parse codex output failed: ${err.message || err}` };
+    return { ok: false, error: `parse codex output failed: ${err.message || err}`, decision: null };
   } finally {
     try {
       fs.unlinkSync(outPath);
@@ -89,8 +97,7 @@ function runCodexPlanner(prompt, model) {
 function validateDecision(obj) {
   if (!obj || typeof obj !== "object") return null;
   const action = String(obj.action || "").toLowerCase();
-  const allowed = new Set(["goto", "click", "type", "press", "scroll", "wait", "done", "fail", "pause"]);
-  if (!allowed.has(action)) return null;
+  if (!ALLOWED_ACTIONS.has(action)) return null;
   const reason = (obj.reason || "planner_decision").replace(/\s+/g, " ").trim();
 
   const out = { action, reason };

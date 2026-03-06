@@ -1,5 +1,7 @@
 "use strict";
 
+const { ALLOWED_ACTIONS } = require("../core/constants");
+
 /**
  * Claude planner backend
  * Uses Anthropic API with vision support
@@ -15,7 +17,7 @@ async function runClaudePlanner(prompt, model, timeoutMs, screenshotB64) {
   ).replace(/\/$/, "");
   const plannerModel = model || process.env.OWA_AGENT_MODEL || "claude-sonnet-4-6";
 
-  process.stderr.write(`[agent] using Claude backend, model=${plannerModel}, has_screenshot=${Boolean(screenshotB64)}\n`);
+  process.stderr.write(`[agent] using Claude backend, model=${plannerModel}\n`);
 
   const system = [
     "You output one JSON object only.",
@@ -84,7 +86,12 @@ async function runClaudePlanner(prompt, model, timeoutMs, screenshotB64) {
     const parsed = JSON.parse(jsonText);
     const decision = validateDecision(parsed);
     if (!decision) {
-      return { ok: false, error: "claude planner output failed local validation" };
+      // Return parsed object even if validation failed
+      return {
+        ok: false,
+        error: "claude planner output failed local validation",
+        decision: parsed
+      };
     }
     return { ok: true, decision };
   } catch (err) {
@@ -100,8 +107,7 @@ async function runClaudePlanner(prompt, model, timeoutMs, screenshotB64) {
 function validateDecision(obj) {
   if (!obj || typeof obj !== "object") return null;
   const action = String(obj.action || "").toLowerCase();
-  const allowed = new Set(["goto", "click", "type", "press", "scroll", "wait", "extract", "close", "back", "done", "fail", "pause"]);
-  if (!allowed.has(action)) return null;
+  if (!ALLOWED_ACTIONS.has(action)) return null;
   const reason = (obj.reason || "planner_decision").replace(/\s+/g, " ").trim();
 
   const out = { action, reason };

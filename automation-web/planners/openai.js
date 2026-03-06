@@ -1,5 +1,7 @@
 "use strict";
 
+const { ALLOWED_ACTIONS } = require("../core/constants");
+
 /**
  * OpenAI planner backend
  * Uses OpenAI API with vision support
@@ -15,7 +17,7 @@ async function runApiPlanner(prompt, model, timeoutMs, screenshotB64) {
   ).replace(/\/$/, "");
   const plannerModel = model || process.env.OWA_AGENT_MODEL || process.env.OWA_PLANNER_MODEL || "gpt-4o-mini";
 
-  process.stderr.write(`[agent] using OpenAI backend, model=${plannerModel}, has_screenshot=${Boolean(screenshotB64)}\n`);
+  process.stderr.write(`[agent] using OpenAI backend, model=${plannerModel}\n`);
 
   const system = [
     "You output one JSON object only.",
@@ -93,8 +95,7 @@ async function runApiPlanner(prompt, model, timeoutMs, screenshotB64) {
 function validateDecision(obj) {
   if (!obj || typeof obj !== "object") return null;
   const action = String(obj.action || "").toLowerCase();
-  const allowed = new Set(["goto", "click", "type", "press", "scroll", "wait", "done", "fail", "pause"]);
-  if (!allowed.has(action)) return null;
+  if (!ALLOWED_ACTIONS.has(action)) return null;
   const reason = (obj.reason || "planner_decision").replace(/\s+/g, " ").trim();
 
   const out = { action, reason };
