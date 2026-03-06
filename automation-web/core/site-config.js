@@ -1,15 +1,31 @@
 "use strict";
 
-/**
- * Site-specific configuration
- * Includes search URL patterns, browse URLs, and key selectors
- */
 const SITE_CONFIG = {
   "xiaohongshu.com": {
-    search_url: "https://www.xiaohongshu.com/search_result?keyword={query}&source=web_explore_feed",
-    browse_url: "https://www.xiaohongshu.com/explore",
+    urls: {
+      search: "https://www.xiaohongshu.com/search_result?keyword={query}&source=web_explore_feed",
+      browse: "https://www.xiaohongshu.com/explore",
+    },
+    planning: {
+      preferred_flow: "list_then_detail",
+      detail_open_mode: "click_result_item",
+      content_from_list: false,
+      summary: "Search results are mainly for discovery. For content retrieval tasks, open the note detail page and use detail data when available.",
+    },
+    api: {
+      list: {
+        endpoint: "https://edith.xiaohongshu.com/api/sns/web/v1/search/notes",
+        items_path: "data.items",
+        item_url_template: "https://www.xiaohongshu.com/explore/{id}?xsec_token={xsec_token}",
+      },
+      detail: {
+        endpoint: "https://edith.xiaohongshu.com/api/sns/web/v1/feed",
+        detail_path: "data.items.0.note_card",
+      },
+    },
     selectors: {
       article_list: ".note-item",
+      article_link: ".note-item a.title, section.note-item a.title, .search-result-container a.title",
       article_title: ".title",
       article_content: ".content",
       login_modal: ".login-modal",
@@ -18,8 +34,23 @@ const SITE_CONFIG = {
   },
 
   "zhihu.com": {
-    search_url: "https://www.zhihu.com/search?q={query}",
-    browse_url: "https://www.zhihu.com/",
+    urls: {
+      search: "https://www.zhihu.com/search?q={query}",
+      browse: "https://www.zhihu.com/",
+    },
+    planning: {
+      preferred_flow: "list_only",
+      detail_open_mode: "none",
+      content_from_list: true,
+      summary: "Search results usually contain enough title, excerpt, and URL to answer article discovery and content-summary tasks without opening detail pages.",
+    },
+    api: {
+      list: {
+        endpoint: "https://www.zhihu.com/api/v4/search_v3",
+        items_path: "data",
+        item_url_path: "object.url",
+      },
+    },
     selectors: {
       article_list: ".List-item",
       article_title: ".ContentItem-title",
@@ -30,8 +61,10 @@ const SITE_CONFIG = {
   },
 
   "bilibili.com": {
-    search_url: "https://search.bilibili.com/all?keyword={query}",
-    browse_url: "https://www.bilibili.com/",
+    urls: {
+      search: "https://search.bilibili.com/all?keyword={query}",
+      browse: "https://www.bilibili.com/",
+    },
     selectors: {
       video_list: ".video-item",
       video_title: ".title",
@@ -42,8 +75,10 @@ const SITE_CONFIG = {
   },
 
   "goofish.com": {
-    search_url: "https://www.goofish.com/search?q={query}",
-    browse_url: "https://www.goofish.com/",
+    urls: {
+      search: "https://www.goofish.com/search?q={query}",
+      browse: "https://www.goofish.com/",
+    },
     selectors: {
       item_list: ".item",
       item_title: ".title",
@@ -54,8 +89,10 @@ const SITE_CONFIG = {
   },
 
   "taobao.com": {
-    search_url: "https://s.taobao.com/search?q={query}",
-    browse_url: "https://www.taobao.com/",
+    urls: {
+      search: "https://s.taobao.com/search?q={query}",
+      browse: "https://www.taobao.com/",
+    },
     selectors: {
       item_list: ".item",
       item_title: ".title",
@@ -64,8 +101,10 @@ const SITE_CONFIG = {
   },
 
   "jd.com": {
-    search_url: "https://search.jd.com/Search?keyword={query}",
-    browse_url: "https://www.jd.com/",
+    urls: {
+      search: "https://search.jd.com/Search?keyword={query}",
+      browse: "https://www.jd.com/",
+    },
     selectors: {
       item_list: ".gl-item",
       item_title: ".p-name",
@@ -74,8 +113,10 @@ const SITE_CONFIG = {
   },
 
   "weibo.com": {
-    search_url: "https://s.weibo.com/weibo?q={query}",
-    browse_url: "https://weibo.com/",
+    urls: {
+      search: "https://s.weibo.com/weibo?q={query}",
+      browse: "https://weibo.com/",
+    },
     selectors: {
       post_list: ".card-wrap",
       post_content: ".txt",
@@ -85,8 +126,10 @@ const SITE_CONFIG = {
   },
 
   "douyin.com": {
-    search_url: "https://www.douyin.com/search/{query}",
-    browse_url: "https://www.douyin.com/",
+    urls: {
+      search: "https://www.douyin.com/search/{query}",
+      browse: "https://www.douyin.com/",
+    },
     selectors: {
       video_list: ".video-item",
       video_title: ".title"
@@ -94,9 +137,6 @@ const SITE_CONFIG = {
   }
 };
 
-/**
- * Common site keywords mapping
- */
 const COMMON_SITES = {
   "小红书": "xiaohongshu.com",
   "xhs": "xiaohongshu.com",
@@ -119,34 +159,27 @@ const COMMON_SITES = {
   "douyin": "douyin.com"
 };
 
-/**
- * Build search URL with keywords
- */
 function buildSearchUrl(domain, keywords) {
   const config = SITE_CONFIG[domain];
-  if (!config || !config.search_url) return null;
+  const searchUrl = config?.urls?.search || config?.search_url;
+  if (!searchUrl) return null;
 
   const query = encodeURIComponent(keywords.join(" "));
-  return config.search_url.replace("{query}", query);
+  return searchUrl.replace("{query}", query);
 }
 
-/**
- * Get browse URL for a domain
- */
 function getBrowseUrl(domain) {
   const config = SITE_CONFIG[domain];
-  if (!config || !config.browse_url) return `https://www.${domain}/`;
-  return config.browse_url;
+  const browseUrl = config?.urls?.browse || config?.browse_url;
+  if (!browseUrl) return `https://www.${domain}/`;
+  return browseUrl;
 }
 
-/**
- * Get site configuration by URL
- */
 function getSiteConfig(url) {
   try {
     const domain = new URL(url).hostname.replace(/^www\./, "");
     return SITE_CONFIG[domain] || null;
-  } catch (err) {
+  } catch (_err) {
     return null;
   }
 }
@@ -156,5 +189,5 @@ module.exports = {
   COMMON_SITES,
   buildSearchUrl,
   getBrowseUrl,
-  getSiteConfig
+  getSiteConfig,
 };

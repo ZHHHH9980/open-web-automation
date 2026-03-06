@@ -45,7 +45,7 @@ function saveExtractedContent(result) {
 
   if (extractionFile && fs.existsSync(extractionFile)) {
     const extractedContent = fs.readFileSync(extractionFile, "utf-8");
-    content += "=== 提取的原始内容 ===\n\n";
+    content += "=== 采集的原始数据 ===\n\n";
     content += extractedContent;
   }
 
@@ -95,4 +95,3 @@ function saveExtractedContent(result) {
     process.exitCode = 1;
   }
 })();
-

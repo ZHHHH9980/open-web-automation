@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.2.0",
   "description": "Web automation runner via Playwright CDP",
-  "main": "run-web-task.js",
+  "main": "run-agent-task.js",
   "license": "UNLICENSED",
   "author": "",
   "repository": {
@@ -11,7 +11,7 @@
     "url": "file:///Users/a1/Documents/open-web-automation/automation-web"
   },
   "scripts": {
-    "run": "node run-web-task.js",
+    "run": "node run-agent-task.js",
     "e2e": "node harness/run-e2e.js"
   },
   "dependencies": {

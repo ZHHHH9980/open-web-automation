@@ -1,33 +1,23 @@
 "use strict";
 
 const { runPlanner } = require("../planners");
+const { SITE_CONFIG } = require("./site-config");
+const {
+  buildActionCatalogLines,
+  buildPlannerActionReference,
+  getActionDefinition,
+} = require("./actions/registry");
 
-/**
- * Generate a complete execution plan for the task
- * Now includes task analysis in the same LLM call
- * Can work without page state (before opening browser)
- * @param {string} task - User task description
- * @param {object|null} state - Current page state (null if before opening browser)
- * @param {number} maxSteps - Maximum steps allowed
- * @param {object} commonSites - Map of common site keywords to domains
- * @returns {Promise<{ok: boolean, analysis?: object, plan?: Array, error?: string}>}
- */
 async function generatePlan(task, state, maxSteps = 15, commonSites = {}) {
   const prompt = buildPlanningPrompt(task, state, maxSteps, commonSites);
-
-  // Use planner to generate analysis + plan (no screenshot if state is null)
-  const result = await runPlanner(prompt, null, state?.screenshot_b64 || null);
+  const result = await runPlanner(prompt, null, null);
 
   if (!result.ok) {
-    // Even if planner failed, try to return the decision if available
     return { ok: false, error: result.error, rawPlan: result.decision || null };
   }
 
-  // Extract analysis and plan
   const analysis = result.decision?.analysis || null;
   const plan = result.decision?.plan || [];
-
-  // Validate plan structure
   if (!Array.isArray(plan) || plan.length === 0) {
     return { ok: false, error: "Invalid plan structure", rawPlan: result.decision };
   }
@@ -35,16 +25,35 @@ async function generatePlan(task, state, maxSteps = 15, commonSites = {}) {
   return { ok: true, analysis, plan, rawPlan: result.decision };
 }
 
-/**
- * Build prompt for planning mode
- * Now includes task analysis + execution plan in one LLM call
- * Works with or without page state
- */
+function toYesNo(value) {
+  return value ? "yes" : "no";
+}
+
+function buildSitePlanningReferenceLines() {
+  const entries = Object.entries(SITE_CONFIG)
+    .filter(([, config]) => config.planning || config.api?.list || config.api?.detail)
+    .flatMap(([domain, config]) => {
+      const preferredFlow = config.planning?.preferred_flow || "unspecified";
+      const detailOpenMode = config.planning?.detail_open_mode || "unspecified";
+      const contentFromList = Boolean(config.planning?.content_from_list);
+      const summary = config.planning?.summary || "No special planning guidance configured.";
+      return [
+        `- ${domain} | search=${toYesNo(Boolean(config.urls?.search || config.search_url))} | list_api=${toYesNo(Boolean(config.api?.list))} | detail_api=${toYesNo(Boolean(config.api?.detail))} | flow=${preferredFlow} | detail_open_mode=${detailOpenMode} | content_from_list=${toYesNo(contentFromList)}`,
+        `  Notes: ${summary}`,
+      ];
+    });
+
+  if (entries.length === 0) {
+    return ["- No sites currently expose planning guidance or configured API endpoints."];
+  }
+
+  return entries;
+}
+
 function buildPlanningPrompt(task, state, maxSteps, commonSites = {}) {
   const siteList = Object.entries(commonSites)
     .map(([keyword, domain]) => `  - ${keyword}: ${domain}`)
     .join("\n");
-
   const hasPageState = state && state.url;
 
   const promptLines = [
@@ -60,27 +69,16 @@ function buildPlanningPrompt(task, state, maxSteps, commonSites = {}) {
     "Common Sites Reference:",
     siteList,
     "",
+    "Site Planning Reference:",
+    ...buildSitePlanningReferenceLines(),
+    "",
     "=== STEP 2: Execution Plan ===",
     "Then, break down into atomic actions:",
     "",
     "Available actions:",
-    "- Navigation: goto, back",
-    "- Interaction: click, type, press, wait",
-    "- Data: extract (single item), collect (list items)",
-    "- Control: close (close modal/popup), done, fail, pause",
+    ...buildActionCatalogLines(),
     "",
-    "Action Guidelines:",
-    "1. For goto: specify full URL",
-    "2. For search: use type with press_enter parameter",
-    "3. For extraction: use extract action with descriptive label",
-    "4. For list tasks (e.g., 'first 3 articles', 'top 5 results'):",
-    "   - Use collect to get all list items as JSON",
-    "   - Specify max_items parameter (e.g., max_items: 3)",
-    "   - Then click each item based on collected data",
-    "   - Extract content from detail pages",
-    "   Pattern: collect → click item 1 → extract → back → click item 2 → extract → back → ...",
-    "5. Use placeholder target_id (will be filled during execution)",
-    "6. Final step must be 'done'",
+    ...buildPlannerActionReference(),
     "",
   ];
 
@@ -89,13 +87,13 @@ function buildPlanningPrompt(task, state, maxSteps, commonSites = {}) {
       "Current Page State:",
       `URL: ${state.url}`,
       `Title: ${state.title}`,
-      `Candidates: ${state.candidates?.length || 0} interactive elements`,
+      `Captured API Responses: ${state.api_responses?.length || 0}`,
       ""
     );
   } else {
     promptLines.push(
       "Note: Browser not yet opened. Generate plan based on task description only.",
-      "Use generic actions without specific target_id (will be determined during execution).",
+      "Prefer API-first actions, but you may use click with target_id when the site planning reference says detail_open_mode=click_result_item.",
       ""
     );
   }
@@ -110,13 +108,12 @@ function buildPlanningPrompt(task, state, maxSteps, commonSites = {}) {
     '    "goal": "brief description"',
     "  },",
     '  "plan": [',
-    '    {"step": 1, "action": "goto", "url": "https://...", "reason": "..."},',
-    '    {"step": 2, "action": "type", "text": "...", "press_enter": true, "reason": "..."},',
-    '    {"step": 3, "action": "collect", "max_items": 3, "reason": "collect first 3 items from list"},',
-    '    {"step": 4, "action": "click", "reason": "click first article from collected list"},',
-    '    {"step": 5, "action": "extract", "label": "article_1_content", "reason": "..."},',
-    '    {"step": 6, "action": "back", "reason": "return to list"},',
-    '    {"step": 7, "action": "done", "result": "...", "reason": "..."}',
+    '    {"step": 1, "action": "listen", "reason": "Start API monitoring before navigation"},',
+    '    {"step": 2, "action": "goto", "url": "https://...", "reason": "Navigate to the target page"},',
+    '    {"step": 3, "action": "scrape_list", "max_items": 3, "reason": "Extract the first 3 items from the configured list API"},',
+    '    {"step": 4, "action": "click", "target_id": 1, "reason": "Open the first result when the site requires click_result_item for detail pages"},',
+    '    {"step": 5, "action": "scrape_detail", "reason": "Capture detail data from the configured detail API if it was triggered"},',
+    '    {"step": 6, "action": "done", "result": "...", "reason": "Task complete"}',
     "  ]",
     "}",
     "",
@@ -125,9 +122,16 @@ function buildPlanningPrompt(task, state, maxSteps, commonSites = {}) {
     "- analysis.target_site should be domain only (e.g., 'xiaohongshu.com')",
     "- Each plan step must have: step, action, reason",
     "- Include all necessary parameters for each action",
-    "- NO scroll action (use selectors to extract content directly)",
-    "- For list tasks: use collect with max_items, then click/extract each item",
-    "- For click/type actions without page state, omit target_id (will be added during execution)",
+    "- Only use the actions listed above; do not invent new action names",
+    "- Do not use selector, x, or y in plans unless the current page state explicitly requires them",
+    "- You may use click with target_id when detail_open_mode=click_result_item; target_id means the 1-based result rank to open",
+    "- If flow=list_only and content_from_list=yes, prefer listen -> goto -> scrape_list -> done for title/content retrieval tasks",
+    "- If flow=list_then_detail and content_from_list=no, use scrape_list for discovery, then open detail pages and use scrape_detail for content retrieval tasks",
+    "- If detail_open_mode=click_result_item, prefer click target_id=1/2/3 after scrape_list and do not use goto with {{item_n_url}} placeholders for that site",
+    "- If detail_open_mode=goto_item_url, goto with {{item_n_url}} placeholders is allowed after scrape_list succeeds",
+    "- Only use scrape_list on sites that explicitly define api.list in site-config",
+    "- Only use scrape_detail on sites that explicitly define api.detail in site-config",
+    "- Prefer direct search URL navigation when the site supports search and the task includes explicit keywords",
     "- Final step must be 'done' with result summary",
     ""
   );
@@ -140,8 +144,7 @@ function buildPlanningPrompt(task, state, maxSteps, commonSites = {}) {
         max_steps: maxSteps,
         current_url: state.url,
         page_title: state.title,
-        body_text: state.body_text?.slice(0, 2000) || "",
-        candidates: state.candidates,
+        api_responses_count: state.api_responses?.length || 0,
       }, null, 2)
     );
   } else {
@@ -154,98 +157,16 @@ function buildPlanningPrompt(task, state, maxSteps, commonSites = {}) {
   return promptLines.join("\n");
 }
 
-/**
- * Validate if a planned action can be executed in current state
- */
-function canExecutePlan(plannedAction, state) {
-  const action = plannedAction.action;
-
-  // goto always executable
-  if (action === "goto") return true;
-
-  // done/fail/pause always executable
-  if (["done", "fail", "pause"].includes(action)) return true;
-
-  // scroll/wait/press always executable
-  if (["scroll", "wait", "press", "back"].includes(action)) return true;
-
-  // click/type need valid selector or coordinates
-  if (action === "click" || action === "type") {
-    // Has coordinates
-    if (plannedAction.x != null && plannedAction.y != null) return true;
-
-    // Has direct selector
-    if (plannedAction.selector) return true;
-
-    // Has target_id - check if it exists in candidates
-    if (plannedAction.target_id) {
-      const candidate = state.candidates?.find(c => c.id === plannedAction.target_id);
-      return !!candidate;
-    }
-
+function canExecutePlan(plannedAction, state, context = {}) {
+  const definition = getActionDefinition(plannedAction?.action);
+  if (!definition || typeof definition.canExecute !== "function") {
     return false;
   }
 
-  return true;
-}
-
-/**
- * Replan remaining steps when execution fails
- */
-async function replan(task, state, executedSteps, remainingSteps) {
-  const prompt = buildReplanningPrompt(task, state, executedSteps, remainingSteps);
-
-  const result = await runPlanner(prompt, null, state.screenshot_b64);
-
-  if (!result.ok) {
-    return { ok: false, error: result.error };
-  }
-
-  const plan = result.decision?.plan || [];
-  return { ok: true, plan };
-}
-
-/**
- * Build prompt for replanning
- */
-function buildReplanningPrompt(task, state, executedSteps, remainingSteps) {
-  const payload = {
-    task,
-    current_url: state.url,
-    page_title: state.title,
-    body_text: state.body_text,
-    candidates: state.candidates,
-    executed_steps: executedSteps,
-    remaining_steps: remainingSteps,
-  };
-
-  const promptLines = [
-    "The original plan encountered an issue. You need to replan the remaining steps.",
-    "",
-    "Original task: " + task,
-    "",
-    "Steps executed so far:",
-    JSON.stringify(executedSteps, null, 2),
-    "",
-    "Steps that couldn't be executed:",
-    JSON.stringify(remainingSteps, null, 2),
-    "",
-    "Current page state:",
-    JSON.stringify({
-      url: state.url,
-      title: state.title,
-      candidates: state.candidates,
-    }, null, 2),
-    "",
-    "Generate a NEW plan to complete the task from the current state.",
-    "Output format: {\"plan\": [{step, action, reason, ...params}]}",
-  ];
-
-  return promptLines.join("\n");
+  return definition.canExecute(plannedAction, state, context);
 }
 
 module.exports = {
   generatePlan,
   canExecutePlan,
-  replan,
 };

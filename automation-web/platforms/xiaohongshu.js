@@ -58,7 +58,7 @@ module.exports = {
   agent_hints: {
     // 关键行为提示
     modal_navigation: "This site uses modal popups for article details. DO NOT use 'back' action. MUST use close_button selector to close modals.",
-    content_extraction: "Content is inside modal. System will auto-use content_selector for extract action.",
+    content_extraction: "Content is inside modal. Prefer scrape_detail or other structured API data over DOM extraction.",
     search_results: "Search results may need scrolling to load more items.",
 
     // 常见问题
@@ -74,7 +74,7 @@ module.exports = {
     extract_multiple_articles: [
       "1. Search for keyword",
       "2. Click article to open modal",
-      "3. Extract content from modal",
+      "3. Capture detail data from API/modal responses",
       "4. Click close_button to close modal",
       "5. Repeat steps 2-4 for next article",
     ],

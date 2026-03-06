@@ -3,7 +3,6 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { isManagedUrl: isManagedUrlFromResolver } = require("./site-resolver");
 
 async function safeClickByText(page, textList) {
   for (const text of textList) {
@@ -71,10 +70,6 @@ async function connectBrowser(cdpUrl) {
 const AUTO_TAB_NAME = "__OPEN_WEB_AUTOMATION__";
 const HUMAN_TAB_PREFIX = "__OPEN_WEB_AUTOMATION_HUMAN__";
 
-function isManagedUrl(url) {
-  return isManagedUrlFromResolver(url);
-}
-
 async function readWindowNameSafe(page) {
   try {
     return await page.evaluate(() => window.name);
@@ -118,7 +113,6 @@ async function closePagesSafe(pages) {
 }
 
 async function getAutomationPage(context) {
-  const maxTabs = Math.max(1, Number(process.env.WEB_MAX_DOMAIN_TABS || 2));
   const pages = context.pages();
 
   const infos = [];
@@ -134,8 +128,7 @@ async function getAutomationPage(context) {
   }
 
   const owned = infos.filter((i) => i.name === AUTO_TAB_NAME);
-  const managed = infos.filter((i) => isManagedUrl(i.url) && !isHumanLockedName(i.name));
-  const keepInfo = owned[owned.length - 1] || managed[managed.length - 1] || null;
+  const keepInfo = owned[owned.length - 1] || null;
 
   if (keepInfo) {
     await tagAutomationPage(keepInfo.page);
@@ -147,14 +140,6 @@ async function getAutomationPage(context) {
       .map((i) => i.page)
       .filter((p) => !keepInfo || p !== keepInfo.page);
     await closePagesSafe(extraOwned);
-  }
-
-  if (managed.length > maxTabs) {
-    const closableManaged = managed
-      .map((i) => i.page)
-      .filter((p) => !keepInfo || p !== keepInfo.page);
-    const needClose = managed.length - maxTabs;
-    await closePagesSafe(closableManaged.slice(0, needClose));
   }
 
   const stale = infos

@@ -37,7 +37,7 @@
 │                                                  │
 │  1. 收集页面状态                                 │
 │     - 截图（JPEG, quality=20）                  │
-│     - 提取 DOM 候选元素（按钮、链接、输入框）    │
+│     - 记录已捕获的 API 响应                    │
 │     - 获取页面文本（前 2000 字符）              │
 │                                                  │
 │  2. Phase 1: 任务分析（首次）                    │
@@ -47,11 +47,11 @@
 │  3. Phase 2: 执行决策                           │
 │     - 构建 prompt（带 plan + 截图 + history）   │
 │     - LLM 返回 JSON 决策                        │
-│       {action: "click", x: 350, y: 420}         │
+│       {action: "scrape_list", max_items: 10}    │
 │                                                  │
 │  4. 执行动作                                     │
-│     - goto/click/type/press/scroll/wait         │
-│     - 坐标点击（vision）或 selector 点击（DOM） │
+│     - listen/goto/scrape_*/back/wait            │
+│     - API-first，不依赖 DOM 点击                │
 │                                                  │
 │  5. 循环检测                                     │
 │     - 检测截图大小 + URL 是否重复               │
@@ -90,7 +90,7 @@
 - **输出**：`{verified: true/false, reason}`
 - **作用**：防止过早 done，确保真正完成
 
-## 4. 站点识别系统（learning/system.js）
+## 4. 站点识别系统（site-config.js）
 
 **策略：URL 提取 > 硬编码站点 > Google 搜索**
 
@@ -115,7 +115,7 @@ const COMMON_SITES = {
 
 ## 5. 关键设计
 
-1. **Vision-First**：优先用坐标点击内容，避免 DOM selector 错误
+1. **API-First**：优先依赖已捕获的结构化接口响应
 2. **3-Phase Prompt**：分析 → 执行 → 验证，提高准确性
 3. **硬编码站点 + Google 兜底**：常用站点硬编码，未知站点 Google 搜索
 4. **循环检测**：防止 Agent 陷入无限循环
@@ -140,16 +140,18 @@ Agent 循环（LLM + 截图）
 automation-web/
 ├── run-agent-task.js      # 入口：任务执行
 ├── llm-agent.js           # Agent 核心循环
-├── prompts/               # 三阶段 Prompt
-│   ├── analysis.js        # Phase 1: 任务分析
-│   ├── execution.js       # Phase 2: 执行决策
-│   └── verification.js    # Phase 3: 结果验证
-├── learning/              # 站点识别系统
-│   └── system.js          # 硬编码站点 + URL 猜测
-├── config/                # 配置系统
-│   ├── manager.js         # 配置管理器
-│   └── sites/             # 站点配置
-│       └── 闲鱼.json      # 站点特定配置
+├── planners/              # Planner 后端适配层
+│   ├── index.js           # 自动选择 planner 后端
+│   ├── codex.js           # Codex planner
+│   ├── openai.js          # OpenAI planner
+│   └── claude.js          # Claude planner
+├── core/                  # 核心运行时
+│   ├── site-config.js     # 站点知识与 URL/API 配置
+│   ├── task-planner.js    # 任务分析 + 执行计划生成
+│   ├── task-initializer.js# 根据 planner 结果初始化任务
+│   ├── browser.js         # 浏览器连接与 automation tab 管理
+│   ├── executor.js        # 原子动作执行
+│   └── ...
 └── core/                  # 基础设施
     ├── browser.js         # Playwright 封装
     ├── result.js          # 结果协议

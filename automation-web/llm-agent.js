@@ -1,50 +1,15 @@
 "use strict";
 
-const fs = require("fs");
-const path = require("path");
-const os = require("os");
-
 const core = require("./core");
-const { connectBrowser, getAutomationPage, makeScreenshot, markHumanPauseTab } = core.browser;
+const { markHumanPauseTab } = core.browser;
 const { toResult } = core.result;
-const { guessSeedUrl: guessSeedUrlFromResolver } = core.siteResolver;
-const { LoopDetector } = core.loopDetector;
-const { runPlanner } = require("./planners");
-const { collectPageState } = core.stateCollector;
-const { buildPlannerPrompt } = core.promptBuilder;
+const { collectPageState, startApiCollection } = core.stateCollector;
 const { executeDecision } = core.executor;
-const { generatePlan, canExecutePlan, replan } = core.taskPlanner;
-const { generateConclusion } = core.conclusionGenerator;
-const { quickAnalyzeTask } = core.taskAnalyzer;
-const { COMMON_SITES, buildSearchUrl, getBrowseUrl, getSiteConfig } = core.siteConfig;
-
-// Generate unique task ID for this execution
-function generateTaskId() {
-  return `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-}
-
-// Get extraction file path for this task
-function getExtractionFilePath(taskId) {
-  return path.join(os.tmpdir(), `owa_extract_${taskId}.txt`);
-}
-
-function normalizeText(s) {
-  return String(s || "").replace(/\s+/g, " ").trim();
-}
-
-function toInt(v, fallback) {
-  const n = Number(v);
-  return Number.isFinite(n) ? Math.floor(n) : fallback;
-}
-
-function logProgress(enabled, msg) {
-  if (!enabled) return;
-  process.stderr.write(`[agent] ${msg}\n`);
-}
-
-function guessSeedUrl(task) {
-  return guessSeedUrlFromResolver(task);
-}
+const { canExecutePlan } = core.taskPlanner;
+const { COMMON_SITES } = core.siteConfig;
+const { analyzeAndPlan, determineInitialUrl, initializeBrowser } = core.taskInitializer;
+const { generateTaskId, getExtractionFilePath, normalizeText, toInt, logProgress } = core.utils;
+const { data: dataHandler, listen: listenHandler } = core.actions;
 
 async function runAgentTask(rawTask, opts = {}) {
   const task = normalizeText(rawTask);
@@ -58,302 +23,108 @@ async function runAgentTask(rawTask, opts = {}) {
   }
 
   const cdpUrl = opts.cdpUrl || process.env.WEB_CDP_URL || "http://127.0.0.1:9222";
-  const maxSteps = Math.max(1, toInt(process.env.OWA_AGENT_MAX_STEPS, 15));
-  const candidateLimit = Math.max(20, toInt(process.env.OWA_AGENT_CANDIDATE_LIMIT, 30));
+  const maxSteps = Math.max(1, toInt(process.env.OWA_AGENT_MAX_STEPS, 30));
   const model = process.env.OWA_AGENT_CODEX_MODEL || "";
   const keepOpenOnHuman = process.env.WEB_KEEP_OPEN_ON_HUMAN !== "0";
   const keepOpen = opts.debugMode || process.env.WEB_KEEP_OPEN === "1";
   const debug = process.env.OWA_AGENT_DEBUG === "1";
   const progress = process.env.OWA_AGENT_PROGRESS !== "0";
   const timeoutMs = Math.max(1000, toInt(process.env.WEB_TASK_TIMEOUT_MS, 180000));
-  const usePlanningMode = process.env.OWA_AGENT_PLANNING_MODE === "1";
-  const includeScreenshot = process.env.OWA_INCLUDE_SCREENSHOT === "1" || opts.includeScreenshot; // 新增：screenshot 可选
   const startedAt = Date.now();
 
   let browser;
   let page;
-  let lastShotPath = "";
-  let lastShotB64 = "";
   let lastUrl = "";
   const history = [];
   const taskId = generateTaskId(); // Unique ID for this task
   const extractionFile = getExtractionFilePath(taskId); // File to store extracted content
   let extractedCount = 0; // Counter for extracted items
   let requiresHuman = false;
-  const loopDetector = new LoopDetector();
+
+  // Context for executeDecision (includes API collection support)
+  const executionContext = {
+    startApiCollection,
+    apiCollectors: [],
+    currentApiCollector: null
+  };
 
   try {
     // ===== Step 1: Analyze task and generate execution plan (BEFORE opening browser) =====
-    logProgress(progress, `task started: ${task}`);
-    logProgress(progress, "analyzing task and generating execution plan...");
+    let { executionPlan, taskAnalysis } = await analyzeAndPlan(task, maxSteps, COMMON_SITES, progress);
 
-    const planResult = await generatePlan(task, null, maxSteps, COMMON_SITES);
-
-    let executionPlan = null;
-    let taskAnalysis = null;
-
-    if (planResult.ok) {
-      executionPlan = planResult.plan;
-      taskAnalysis = planResult.analysis;
-
-      // Display task analysis
-      if (taskAnalysis) {
-        logProgress(progress, "");
-        logProgress(progress, "=== Task Analysis ===");
-        logProgress(progress, `Intent: ${taskAnalysis.intent} (${taskAnalysis.intent === "search" ? "明确搜索" : "漫无目的浏览"})`);
-        logProgress(progress, `Target Site: ${taskAnalysis.target_site || "unknown"}`);
-        if (taskAnalysis.keywords && taskAnalysis.keywords.length > 0) {
-          logProgress(progress, `Keywords: ${taskAnalysis.keywords.join(", ")}`);
-        }
-        logProgress(progress, `Goal: ${taskAnalysis.goal || task}`);
-        logProgress(progress, "====================");
-      }
-
-      // Display execution plan
-      logProgress(progress, "");
-      logProgress(progress, "=== Execution Plan ===");
-      executionPlan.forEach((step, idx) => {
-        const actionDesc = step.action === "type" ? `${step.action} "${step.text}"` :
-                          step.action === "goto" ? `${step.action} ${step.url}` :
-                          step.action === "click" ? `${step.action}` :
-                          step.action === "extract" ? `${step.action} (label: ${step.label || "N/A"})` :
-                          step.action;
-        logProgress(progress, `  ${idx + 1}. ${actionDesc}`);
-        logProgress(progress, `     └─ ${step.reason}`);
+    // If plan generation failed, return error
+    if (!executionPlan) {
+      return toResult({
+        success: false,
+        exit_code: 4,
+        message: "plan generation failed",
+        meta: { requires_human: false, task },
       });
-      logProgress(progress, "======================");
-      logProgress(progress, "");
-    } else {
-      // Even if validation failed, try to show raw analysis and plan
-      if (planResult.rawPlan?.analysis) {
-        taskAnalysis = planResult.rawPlan.analysis;
-        logProgress(progress, "");
-        logProgress(progress, "=== Task Analysis (validation failed, showing raw) ===");
-        logProgress(progress, `Intent: ${taskAnalysis.intent} (${taskAnalysis.intent === "search" ? "明确搜索" : "漫无目的浏览"})`);
-        logProgress(progress, `Target Site: ${taskAnalysis.target_site || "unknown"}`);
-        if (taskAnalysis.keywords && taskAnalysis.keywords.length > 0) {
-          logProgress(progress, `Keywords: ${taskAnalysis.keywords.join(", ")}`);
-        }
-        logProgress(progress, `Goal: ${taskAnalysis.goal || task}`);
-        logProgress(progress, "======================================================");
-      }
-
-      if (planResult.rawPlan?.plan && Array.isArray(planResult.rawPlan.plan)) {
-        logProgress(progress, "");
-        logProgress(progress, "=== Execution Plan (validation failed, showing raw) ===");
-        planResult.rawPlan.plan.forEach((step, idx) => {
-          const actionDesc = step.action === "type" ? `${step.action} "${step.text}"` :
-                            step.action === "goto" ? `${step.action} ${step.url}` :
-                            step.action === "click" ? `${step.action}` :
-                            step.action === "extract" ? `${step.action} (label: ${step.label || "N/A"})` :
-                            step.action;
-          logProgress(progress, `  ${idx + 1}. ${actionDesc}`);
-          logProgress(progress, `     └─ ${step.reason || "no reason"}`);
-        });
-        logProgress(progress, "========================================================");
-        logProgress(progress, "");
-      }
-      logProgress(progress, `plan generation failed: ${planResult.error}, using reactive mode`);
-      logProgress(progress, "");
     }
 
     // ===== Step 2: Determine initial URL from task analysis =====
-    let initialUrl;
-    if (taskAnalysis) {
-      const domain = taskAnalysis.target_site;
-      if (taskAnalysis.intent === "search" && domain && taskAnalysis.keywords && taskAnalysis.keywords.length > 0) {
-        initialUrl = buildSearchUrl(domain, taskAnalysis.keywords);
-        if (!initialUrl) {
-          initialUrl = getBrowseUrl(domain);
-          logProgress(progress, `site doesn't support URL search, using browse URL`);
-        }
-      } else if (domain) {
-        initialUrl = getBrowseUrl(domain);
-      } else {
-        initialUrl = guessSeedUrl(task);
-      }
-    } else {
-      // Fallback to heuristic
-      const quickAnalysis = quickAnalyzeTask(task, COMMON_SITES);
-      const domain = quickAnalysis.target_site;
-      if (quickAnalysis.intent === "search" && domain && quickAnalysis.keywords.length > 0) {
-        initialUrl = buildSearchUrl(domain, quickAnalysis.keywords);
-        if (!initialUrl) {
-          initialUrl = getBrowseUrl(domain);
-        }
-      } else if (domain) {
-        initialUrl = getBrowseUrl(domain);
-      } else {
-        initialUrl = guessSeedUrl(task);
-      }
-    }
-
-    logProgress(progress, `Initial URL: ${initialUrl}`);
-    logProgress(progress, "");
-
-    // ===== Step 3: Now open browser and navigate =====
-    logProgress(progress, "opening browser...");
-    const conn = await connectBrowser(cdpUrl);
-    browser = conn.browser;
-    page = await getAutomationPage(conn.context);
-    page.setDefaultTimeout(12000);
-
-    logProgress(progress, `navigating to ${initialUrl}...`);
-    await page.goto(initialUrl, { waitUntil: "domcontentloaded", timeout: 90000 });
-    await page.waitForTimeout(1000);
-
-    // Handle login modal if configured
-    const siteConfig = getSiteConfig(initialUrl);
-    if (siteConfig?.selectors?.login_modal) {
-      try {
-        const modalVisible = await page.locator(siteConfig.selectors.login_modal).isVisible({ timeout: 2000 });
-        if (modalVisible && siteConfig.selectors.login_close_button) {
-          await page.locator(siteConfig.selectors.login_close_button).click();
-          logProgress(progress, "closed login modal");
-          await page.waitForTimeout(500);
-        }
-      } catch (err) {
-        // No modal or close failed, continue
-      }
-    }
-
-    // Planning Mode: Generate complete plan first
-    if (usePlanningMode && !executionPlan) {
-      logProgress(progress, "generating execution plan...");
-
-      // Get initial state
-      const initialState = await collectPageState(page, 0, candidateLimit);
-      const planResult = await generatePlan(task, initialState, maxSteps);
-
-      if (!planResult.ok) {
-        return toResult({
-          success: false,
-          exit_code: 4,
-          message: `planning failed: ${planResult.error}`,
-          meta: { requires_human: false, task },
-        });
-      }
-
-      executionPlan = planResult.plan;
-      logProgress(progress, `plan generated (${executionPlan.length} steps):`);
-      executionPlan.forEach((step, idx) => {
-        const actionDesc = step.action === "type" ? `${step.action} "${step.text}"` :
-                          step.action === "goto" ? `${step.action} ${step.url}` :
-                          step.action;
-        logProgress(progress, `  ${idx + 1}. ${actionDesc} - ${step.reason}`);
+    const initialUrlResult = determineInitialUrl(taskAnalysis, progress);
+    if (!initialUrlResult.ok) {
+      return toResult({
+        success: false,
+        exit_code: 4,
+        message: `initial URL resolution failed: ${initialUrlResult.error}`,
+        meta: { requires_human: false, task },
       });
     }
+    const initialUrl = initialUrlResult.url;
+
+    // ===== Step 3: Now open browser and navigate =====
+    const browserInit = await initializeBrowser(cdpUrl, initialUrl, progress);
+    browser = browserInit.browser;
+    page = browserInit.page;
 
     for (let step = 1; step <= maxSteps; step += 1) {
       if (Date.now() - startedAt > timeoutMs) {
         return toResult({
           success: false,
           exit_code: 124,
-          screenshot: includeScreenshot ? lastShotB64 : "",
           message: `task timeout (${timeoutMs}ms)`,
           meta: {
             requires_human: false,
             task,
             steps: history,
-            screenshot_path: lastShotPath,
             url: lastUrl,
           },
         });
       }
 
-      const state = await collectPageState(page, step, candidateLimit);
-      lastShotPath = state.screenshot_path || lastShotPath;
-      lastShotB64 = state.screenshot_b64 || lastShotB64;
+      const state = await collectPageState(page, step, 0, executionContext.currentApiCollector);
       lastUrl = state.url || lastUrl;
-
-      const screenshotSize = state.screenshot_b64 ? state.screenshot_b64.length : 0;
-      loopDetector.record({
-        screenshot_size: screenshotSize,
-        url: state.url,
-      });
-
-      if (debug) {
-        process.stderr.write(`[agent] step=${step} screenshot size: ${screenshotSize} bytes\n`);
-      }
 
       logProgress(progress, `step ${step}/${maxSteps} url=${state.url || "about:blank"} planning...`);
 
-      // Clean browser state if not starting from blank (skip if we already navigated in planning phase)
-      if (step === 1 && !String(state.url || "").startsWith("about:blank") && !executionPlan) {
-        logProgress(progress, `cleaning browser state from ${state.url}`);
-        await page.goto("about:blank");
-        await page.waitForTimeout(300);
-        loopDetector.reset();
-        continue;
+      // Get next planned action
+      if (!executionPlan || executionPlan.length === 0) {
+        return toResult({
+          success: false,
+          exit_code: 4,
+          message: "execution plan exhausted before task completion",
+          meta: { requires_human: false, task, step, url: state.url },
+        });
       }
 
-      const backend = String(process.env.OWA_AGENT_BACKEND || "auto").toLowerCase();
-      const useVision = backend === "claude" || backend === "anthropic" || backend === "auto";
+      const plannedAction = executionPlan.shift();
 
-      let decision;
-
-      // Planning Mode: Use pre-generated plan
-      if (usePlanningMode && executionPlan && executionPlan.length > 0) {
-        const plannedAction = executionPlan.shift(); // Get next planned action
-
-        // Validate if action can be executed
-        if (canExecutePlan(plannedAction, state)) {
-          decision = plannedAction;
-          logProgress(progress, `executing planned step ${step}/${maxSteps}`);
-        } else {
-          // Replan if action cannot be executed
-          logProgress(progress, `replanning from step ${step} (action not executable)`);
-          const replanResult = await replan(task, state, history, executionPlan);
-
-          if (!replanResult.ok) {
-            return toResult({
-              success: false,
-              exit_code: 4,
-              screenshot: includeScreenshot ? lastShotB64 : "",
-              message: `replanning failed: ${replanResult.error}`,
-              meta: { requires_human: false, task, step, url: state.url },
-            });
-          }
-
-          executionPlan = replanResult.plan;
-          decision = executionPlan.shift();
-        }
-      } else {
-        // Reactive Mode: Ask LLM for next action
-        const historyForPrompt = useVision ? history.slice(-3) : history.slice(-8);
-        const prompt = buildPlannerPrompt(task, step, maxSteps, state, historyForPrompt, false, taskAnalysis);
-
-        // Disable screenshot to reduce cost and latency
-        const screenshot = "";
-
-        if (debug) {
-          process.stderr.write(`[agent] step=${step} screenshot_b64_length=${state.screenshot_b64?.length || 0} screenshot_path=${state.screenshot_path}\n`);
-        }
-
-        const planRet = await runPlanner(prompt, model, screenshot);
-        if (!planRet.ok) {
-          return toResult({
-            success: false,
-            exit_code: 4,
-            screenshot: includeScreenshot ? lastShotB64 : "",
-            message: `planner failed: ${planRet.error}`,
-            meta: {
-              requires_human: false,
-              task,
-              step,
-              cdpUrl,
-              url: state.url,
-              screenshot_path: lastShotPath,
-            },
-          });
-        }
-
-        decision = planRet.decision;
+      if (!canExecutePlan(plannedAction, state)) {
+        return toResult({
+          success: false,
+          exit_code: 4,
+          message: `planned action not executable: ${plannedAction.action}`,
+          meta: { requires_human: false, task, step, url: state.url, planned_action: plannedAction },
+        });
       }
+
+      const decision = plannedAction;
+      logProgress(progress, `executing planned step ${step}/${maxSteps}`);
 
       // Always show agent's reasoning (not just in debug mode)
-      const actionDesc = decision.action === "type" ? `${decision.action} "${decision.text}"` :
-                        decision.action === "goto" ? `${decision.action} ${decision.url}` :
+      const actionDesc = decision.action === "goto" ? `${decision.action} ${decision.url}` :
                         decision.action;
 
       logProgress(progress, `[${step}/${maxSteps}] ${actionDesc}`);
@@ -364,12 +135,6 @@ async function runAgentTask(rawTask, opts = {}) {
       }
 
       // Show key parameters
-      if (decision.selector) {
-        logProgress(progress, `  └─ selector: ${decision.selector}`);
-      }
-      if (decision.target_id) {
-        logProgress(progress, `  └─ target_id: ${decision.target_id}`);
-      }
       if (decision.label) {
         logProgress(progress, `  └─ label: ${decision.label}`);
       }
@@ -381,22 +146,19 @@ async function runAgentTask(rawTask, opts = {}) {
       }
 
       try {
-        const execRet = await executeDecision(page, decision, state, debug);
+        const execRet = await executeDecision(page, decision, state, executionContext);
 
-        // Store extracted data to file
-        if (decision.action === "extract" && execRet.data) {
+        // If listen action was executed, store the collector
+        if (decision.action === "listen" && execRet.apiCollector) {
+          listenHandler.handleApiListener(executionContext, execRet.apiCollector, progress);
+        }
+
+        // Store captured API data to file
+        if (["scrape_list", "scrape_detail"].includes(decision.action) && execRet.data) {
           extractedCount++;
-          const extractionEntry = `--- Extract #${extractedCount} (${execRet.data.label || "unlabeled"}) ---\n${execRet.data.content}\n${
-            execRet.data.full_length > execRet.data.content.length
-              ? `[Truncated, full length: ${execRet.data.full_length} chars]\n`
-              : ""
-          }\n`;
-
-          fs.appendFileSync(extractionFile, extractionEntry, "utf-8");
-
-          if (debug) {
-            process.stderr.write(`[agent] stored extraction #${extractedCount}: ${execRet.data.label}\n`);
-            process.stderr.write(`[agent] extraction file: ${extractionFile}\n`);
+          dataHandler.storeCapturedData(extractionFile, extractedCount, decision.action, execRet.data, debug);
+          if (decision.action === "scrape_list") {
+            executionContext.lastListCapture = execRet.data;
           }
         }
 
@@ -413,40 +175,25 @@ async function runAgentTask(rawTask, opts = {}) {
           if (execRet.requiresHuman) {
             requiresHuman = true;
           }
-          const finalShot = await makeScreenshot(page, `agent-final-${step}`);
-          lastShotPath = finalShot.filePath;
-          lastShotB64 = finalShot.base64;
-
           const finalUrl = page.url();
 
           // Generate conclusion if we have extracted data
-          let conclusion = null;
-          if (extractedCount > 0 && fs.existsSync(extractionFile)) {
-            logProgress(progress, "generating conclusion from extracted data");
-            try {
-              conclusion = await generateConclusion(extractionFile, task, model, { debugMode: opts.debugMode });
-            } catch (err) {
-              logProgress(progress, `conclusion generation failed: ${err.message}`);
-            }
-          }
+          const conclusion = await dataHandler.generateFinalConclusion(
+            extractionFile,
+            extractedCount,
+            task,
+            model,
+            opts,
+            progress
+          );
 
+          // Extract DOM data if requested
           const extractDom = process.env.OWA_EXTRACT_DOM === "1" || opts.extractDom;
-          let domData = {};
-
-          if (extractDom) {
-            logProgress(progress, "extracting DOM data");
-            try {
-              const fullText = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
-              domData = { fullText: fullText.slice(0, 10000) };
-            } catch (err) {
-              // ignore
-            }
-          }
+          const domData = await dataHandler.extractDomData(page, extractDom, progress);
 
           return toResult({
             success: execRet.success,
             exit_code: execRet.success ? 0 : (execRet.requiresHuman ? 2 : 1),
-            screenshot: includeScreenshot ? lastShotB64 : "",
             message: execRet.result,
             meta: {
               requires_human: execRet.requiresHuman || false,
@@ -456,54 +203,8 @@ async function runAgentTask(rawTask, opts = {}) {
               extracted_count: extractedCount,
               extraction_file: extractedCount > 0 ? extractionFile : null,
               conclusion,
-              screenshot_path: includeScreenshot ? lastShotPath : "",
               url: finalUrl,
               dom_data: extractDom ? domData : undefined,
-            },
-          });
-        }
-
-        // Only check loop if task is not done
-        loopDetector.record({
-          action: decision.action,
-          modal_mode: state.site_hints?.modal_mode || false, // 传递弹窗模式信息
-        });
-
-        const loopCheck = loopDetector.detectLoop();
-        if (loopCheck.isLoop) {
-          logProgress(progress, `loop detected: ${loopCheck.reasons.join(', ')}`);
-
-          try {
-            const finalShot = await makeScreenshot(page, 'loop-detected-final');
-            lastShotPath = finalShot.filePath;
-            lastShotB64 = finalShot.base64;
-          } catch (_err) {
-            // ignore
-          }
-
-          // Build a more helpful error message
-          let errorMessage = `Loop detected: ${loopCheck.reasons.join(', ')}`;
-          if (extractedCount > 0) {
-            errorMessage += `\n\nPartially completed: Extracted ${extractedCount} item(s) before loop.`;
-            errorMessage += `\nExtraction file: ${extractionFile}`;
-          }
-          errorMessage += `\n\nLast action: ${history[history.length - 1]?.action || 'unknown'}`;
-          errorMessage += `\nSuggestion: The task may need manual intervention or the page structure changed.`;
-
-          return toResult({
-            success: false,
-            exit_code: 125,
-            screenshot: includeScreenshot ? lastShotB64 : "",
-            message: errorMessage,
-            meta: {
-              requires_human: false,
-              task,
-              steps: history,
-              extracted_count: extractedCount,
-              extraction_file: extractedCount > 0 ? extractionFile : null,
-              screenshot_path: lastShotPath,
-              url: lastUrl,
-              loop_reasons: loopCheck.reasons,
             },
           });
         }
@@ -524,13 +225,11 @@ async function runAgentTask(rawTask, opts = {}) {
     return toResult({
       success: false,
       exit_code: 124,
-      screenshot: includeScreenshot ? lastShotB64 : "",
       message: `max steps reached (${maxSteps})`,
       meta: {
         requires_human: false,
         task,
         steps: history,
-        screenshot_path: lastShotPath,
         url: lastUrl,
       },
     });
@@ -538,14 +237,12 @@ async function runAgentTask(rawTask, opts = {}) {
     return toResult({
       success: false,
       exit_code: 1,
-      screenshot: includeScreenshot ? lastShotB64 : "",
       message: `agent failed: ${normalizeText(err.message || err)}`,
       meta: {
         requires_human: false,
         task,
         steps: history,
         error: String(err),
-        screenshot_path: lastShotPath,
         url: lastUrl,
       },
     });

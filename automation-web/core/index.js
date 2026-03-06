@@ -8,14 +8,17 @@
  */
 
 module.exports = {
-  // Site resolution
-  siteResolver: require("./site-resolver"),
+  // Utilities
+  utils: require("./utils"),
+
+  // Actions handlers
+  actions: require("./actions"),
 
   // Site configuration
   siteConfig: require("./site-config"),
 
-  // Task analysis
-  taskAnalyzer: require("./task-analyzer"),
+  // Task initialization
+  taskInitializer: require("./task-initializer"),
 
   // Browser control
   browser: require("./browser"),
@@ -25,9 +28,6 @@ module.exports = {
 
   // Action execution
   executor: require("./executor"),
-
-  // Prompt building
-  promptBuilder: require("./prompt-builder"),
 
   // Loop detection
   loopDetector: require("./loop-detector"),

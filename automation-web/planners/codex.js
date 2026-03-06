@@ -4,7 +4,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
-const { ALLOWED_ACTIONS } = require("../core/constants");
+const { validateActionDecision } = require("../core/actions/registry");
 
 const ROOT = path.resolve(__dirname, "../..");
 const ACTION_SCHEMA_PATH = path.join(ROOT, "adapter", "agent-action.schema.json");
@@ -14,10 +14,6 @@ function toInt(v, fallback) {
   return Number.isFinite(n) ? Math.floor(n) : fallback;
 }
 
-/**
- * Codex planner backend
- * Uses codex CLI tool
- */
 function runCodexPlanner(prompt, model) {
   process.stderr.write(`[agent] using Codex backend, model=${model || "default"}\n`);
 
@@ -59,7 +55,6 @@ function runCodexPlanner(prompt, model) {
   if (ret.error && ret.error.code === "ETIMEDOUT") {
     return { ok: false, error: "codex planner timeout" };
   }
-
   if (ret.status !== 0) {
     const detail = (ret.stderr || ret.stdout || "codex exited non-zero").replace(/\s+/g, " ").trim();
     return { ok: false, error: detail };
@@ -73,13 +68,17 @@ function runCodexPlanner(prompt, model) {
     if (!raw) return { ok: false, error: "codex output is empty", decision: null };
     const jsonText = raw.match(/\{[\s\S]*\}/)?.[0] || raw;
     const parsed = JSON.parse(jsonText);
-    const decision = validateDecision(parsed);
+
+    if (parsed && typeof parsed === "object" && Array.isArray(parsed.plan)) {
+      return { ok: true, decision: parsed };
+    }
+
+    const decision = validateActionDecision(parsed);
     if (!decision) {
-      // Return parsed object even if validation failed, so we can display it
       return {
         ok: false,
         error: `codex output failed local validation: ${jsonText.replace(/\s+/g, " ").trim().slice(0, 240)}`,
-        decision: parsed  // Include the raw parsed object
+        decision: parsed,
       };
     }
     return { ok: true, decision };
@@ -92,33 +91,6 @@ function runCodexPlanner(prompt, model) {
       // ignore
     }
   }
-}
-
-function validateDecision(obj) {
-  if (!obj || typeof obj !== "object") return null;
-  const action = String(obj.action || "").toLowerCase();
-  if (!ALLOWED_ACTIONS.has(action)) return null;
-  const reason = (obj.reason || "planner_decision").replace(/\s+/g, " ").trim();
-
-  const out = { action, reason };
-
-  if (obj.url != null) out.url = String(obj.url);
-  if (obj.selector != null) out.selector = String(obj.selector);
-  if (obj.text != null) out.text = String(obj.text);
-  if (obj.key != null) out.key = String(obj.key);
-  if (obj.result != null) out.result = String(obj.result);
-  if (obj.data && typeof obj.data === "object" && !Array.isArray(obj.data)) out.data = obj.data;
-
-  if (obj.target_id != null && Number.isFinite(Number(obj.target_id))) out.target_id = Math.max(1, Math.floor(Number(obj.target_id)));
-  if (obj.wait_ms != null && Number.isFinite(Number(obj.wait_ms))) out.wait_ms = Math.max(0, Math.min(20000, Math.floor(Number(obj.wait_ms))));
-  if (obj.scroll_px != null && Number.isFinite(Number(obj.scroll_px))) out.scroll_px = Math.floor(Number(obj.scroll_px));
-  if (obj.clear_first != null) out.clear_first = Boolean(obj.clear_first);
-  if (obj.press_enter != null) out.press_enter = Boolean(obj.press_enter);
-
-  if (obj.x != null && Number.isFinite(Number(obj.x))) out.x = Math.max(0, Math.floor(Number(obj.x)));
-  if (obj.y != null && Number.isFinite(Number(obj.y))) out.y = Math.max(0, Math.floor(Number(obj.y)));
-
-  return out;
 }
 
 module.exports = { runCodexPlanner };
