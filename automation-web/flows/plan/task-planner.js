@@ -1,12 +1,12 @@
 "use strict";
 
-const { runPlanner } = require("../planners");
-const { SITE_CONFIG } = require("./site-config");
+const { runPlanner } = require("../../planners");
+const { SITE_CONFIG } = require("../act/site-config");
 const {
   buildActionCatalogLines,
   buildPlannerActionReference,
   getActionDefinition,
-} = require("./actions/registry");
+} = require("../act/actions/registry");
 
 async function generatePlan(task, state, maxSteps = 15, commonSites = {}) {
   const prompt = buildPlanningPrompt(task, state, maxSteps, commonSites);

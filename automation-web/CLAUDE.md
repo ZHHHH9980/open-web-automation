@@ -61,11 +61,11 @@
 │   - 沉淀成功模式（patterns.jsonl）                           │
 │   - 3次成功 → 自动配置                                       │
 ├─────────────────────────────────────────────────────────────┤
-│   Core Engine (core/ + llm-agent.js)                        │
+│   Core Engine (core/ + flows/orchestrator.js)                        │
 │   - browser.js: Playwright CDP 封装                         │
 │   - result.js: 统一输出协议                                  │
 │   - input.js: 输入解析                                       │
-│   - llm-agent.js: Agent 循环控制                            │
+│   - flows/orchestrator.js: Agent 循环控制                            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -79,7 +79,7 @@
 
 ```
 总计约 1760 行 JavaScript 代码
-- llm-agent.js: ~1000 行（Agent 核心逻辑）
+- flows/orchestrator.js: ~1000 行（Agent 核心逻辑）
 - learning/system.js: ~250 行（学习系统）
 - core/: ~400 行（浏览器控制、协议）
 - run-agent-task.js: ~80 行（入口）
@@ -94,7 +94,7 @@ automation-web/
 ├── CLAUDE.md              # 本文件：开发指南
 ├── README.md              # 用户文档：如何使用
 ├── run-agent-task.js      # 入口：Agent 驱动的任务执行
-├── llm-agent.js           # Agent 核心：LLM 调用、决策循环、自我纠错
+├── flows/orchestrator.js           # Agent 核心：LLM 调用、决策循环、自我纠错
 │
 ├── core/                  # 基础设施层（~400 行）
 │   ├── browser.js         # Playwright CDP 封装
@@ -174,7 +174,7 @@ automation-web/
 - `124`: 超时 - 任务执行超过最大步数限制（默认 15 步）
 - `125`: 检测到循环 - Agent 陷入重复操作循环，自动终止
 
-退出码在 `core/result.js` 中定义，通过 JSON 输出协议返回给调用方。
+退出码在 `flows/finish/result.js` 中定义，通过 JSON 输出协议返回给调用方。
 
 ### 添加新站点支持
 
@@ -257,13 +257,13 @@ const COMMON_SITES = {
   "小红书": "xiaohongshu.com"
 };
 
-// 可以硬编码：动作类型定义（llm-agent.js）
+// 可以硬编码：动作类型定义（flows/orchestrator.js）
 const ALLOWED_ACTIONS = new Set([
   "goto", "click", "type", "press",
   "scroll", "wait", "done", "fail", "pause"
 ]);
 
-// 可以硬编码：协议格式（core/result.js）
+// 可以硬编码：协议格式（flows/finish/result.js）
 function toResult(success, message, meta) {
   return {
     success,
@@ -312,12 +312,12 @@ learning/system.js: guessSeedUrl()
   → 检查 COMMON_SITES["知乎"] → "zhihu.com"
   → 返回 "https://www.zhihu.com/"
   ↓
-llm-agent.js: runAgentTask()
+flows/orchestrator.js: runAgentTask()
   → 调用 Claude API
   → Agent 分析页面快照
   → 生成操作序列: [goto, type, press, done]
   ↓
-core/browser.js: 执行操作
+flows/init/browser.js: 执行操作
   → goto: 跳转到知乎
   → type: 输入搜索关键词
   → press: 按 Enter
@@ -341,7 +341,7 @@ learning/system.js: recordExecution()
 
 ## 当前状态（2026-03-04）
 
-- ✅ 核心 Agent 循环已实现（llm-agent.js）
+- ✅ 核心 Agent 循环已实现（flows/orchestrator.js）
 - ✅ 学习系统已实现（learning/system.js）
 - ✅ 硬编码常用站点（COMMON_SITES）
 - ✅ 自动满意度推断（置信度算法）
@@ -353,5 +353,5 @@ learning/system.js: recordExecution()
 ## 参考资源
 
 - 学习系统设计：`learning/README.md`
-- Agent 调用示例：`llm-agent.js`
+- Agent 调用示例：`flows/orchestrator.js`
 - 任务执行流程：`run-agent-task.js`

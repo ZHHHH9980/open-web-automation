@@ -1,6 +1,6 @@
 "use strict";
 
-const { getAllowedActionNames, validateActionDecision } = require("../core/actions/registry");
+const { getAllowedActionNames, validateActionDecision } = require("../flows/act/actions/registry");
 
 async function runApiPlanner(prompt, model, timeoutMs, screenshotB64) {
   const apiKey = process.env.OWA_AGENT_API_KEY || process.env.OPENAI_API_KEY;

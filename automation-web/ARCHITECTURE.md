@@ -23,7 +23,7 @@
 - 调用 `runAgentTask()` 进入 Agent 循环
 - **成本：~$0.30（多次 LLM + 截图）**
 
-## 2. Agent 核心循环（llm-agent.js）
+## 2. Agent 核心循环（flows/orchestrator.js）
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -139,7 +139,7 @@ Agent 循环（LLM + 截图）
 ```
 automation-web/
 ├── run-agent-task.js      # 入口：任务执行
-├── llm-agent.js           # Agent 核心循环
+├── flows/orchestrator.js           # Agent 核心循环
 ├── planners/              # Planner 后端适配层
 │   ├── index.js           # 自动选择 planner 后端
 │   ├── codex.js           # Codex planner

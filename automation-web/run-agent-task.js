@@ -4,7 +4,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { runAgentTask } = require("./llm-agent");
+const { runAgentTask } = require("./flows/orchestrator");
 
 function writeJsonLine(obj) {
   return new Promise((resolve, reject) => {

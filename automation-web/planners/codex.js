@@ -4,7 +4,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
-const { validateActionDecision } = require("../core/actions/registry");
+const { validateActionDecision } = require("../flows/act/actions/registry");
 
 const ROOT = path.resolve(__dirname, "../..");
 const ACTION_SCHEMA_PATH = path.join(ROOT, "adapter", "agent-action.schema.json");

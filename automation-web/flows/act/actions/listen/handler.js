@@ -1,6 +1,6 @@
 "use strict";
 
-const { logProgress } = require("../../utils");
+const { logProgress } = require("../../../../shared/utils");
 
 /**
  * Handle API listener setup

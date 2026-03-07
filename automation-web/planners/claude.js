@@ -1,6 +1,6 @@
 "use strict";
 
-const { getAllowedActionNames, validateActionDecision } = require("../core/actions/registry");
+const { getAllowedActionNames, validateActionDecision } = require("../flows/act/actions/registry");
 
 async function runClaudePlanner(prompt, model, timeoutMs, screenshotB64) {
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN;

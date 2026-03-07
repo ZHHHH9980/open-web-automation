@@ -30,7 +30,7 @@
 
 ### 2. 新增站点配置系统
 
-**新文件：`core/site-config.js`**
+**新文件：`flows/act/site-config.js`**
 - 硬编码常用站点的搜索/浏览 URL 模式
 - 硬编码关键选择器（提高准确性）
 - 支持登录弹窗自动关闭
@@ -52,7 +52,7 @@
 }
 ```
 
-### 3. 调整主流程（llm-agent.js）
+### 3. 调整主流程（flows/orchestrator.js）
 
 **Step 0: 任务分析**
 - 在浏览器连接后立即调用 `analyzeTask()`

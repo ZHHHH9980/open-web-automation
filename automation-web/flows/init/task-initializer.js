@@ -1,9 +1,9 @@
 "use strict";
 
-const { generatePlan } = require("./task-planner");
-const { buildSearchUrl, getBrowseUrl } = require("./site-config");
+const { generatePlan } = require("../plan/task-planner");
+const { buildSearchUrl, getBrowseUrl } = require("../act/site-config");
 const { connectBrowser, getAutomationPage } = require("./browser");
-const { logProgress } = require("./utils");
+const { logProgress } = require("../../shared/utils");
 
 /**
  * Analyze task and generate execution plan

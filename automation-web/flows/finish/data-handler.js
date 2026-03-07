@@ -1,8 +1,8 @@
 "use strict";
 
 const fs = require("fs");
-const { logProgress } = require("../../utils");
-const { generateConclusion } = require("../../conclusion-generator");
+const { logProgress } = require("../../shared/utils");
+const { generateConclusion } = require("./conclusion-generator");
 
 function serializeCapturedData(action, data) {
   if (action === "scrape_list") {
@@ -38,6 +38,31 @@ function storeCapturedData(dataFile, capturedCount, action, data, debug) {
   }
 }
 
+
+function loadCapturedEntries(dataFile) {
+  const raw = fs.readFileSync(dataFile, "utf-8");
+  const parts = raw.split(/--- Capture #\d+ \(([^)]+)\) ---\n/g);
+  const entries = [];
+
+  for (let idx = 1; idx < parts.length; idx += 2) {
+    const action = (parts[idx] || "").trim();
+    const content = (parts[idx + 1] || "").trim();
+    if (!action || !content) continue;
+
+    let parsed = null;
+    try {
+      parsed = JSON.parse(content);
+    } catch (_err) {
+      parsed = null;
+    }
+
+    const label = parsed?.detail?.title || parsed?.items?.[0]?.title || `${action} capture`;
+    entries.push({ action, label, content, parsed });
+  }
+
+  return entries;
+}
+
 async function generateFinalConclusion(dataFile, capturedCount, task, model, opts, progress) {
   if (capturedCount === 0 || !fs.existsSync(dataFile)) {
     return null;
@@ -45,7 +70,8 @@ async function generateFinalConclusion(dataFile, capturedCount, task, model, opt
 
   logProgress(progress, "generating conclusion from captured data");
   try {
-    return await generateConclusion(dataFile, task, model, { debugMode: opts.debugMode });
+    const extractedData = loadCapturedEntries(dataFile);
+    return await generateConclusion(extractedData, task, model, { debugMode: opts.debugMode });
   } catch (err) {
     logProgress(progress, `conclusion generation failed: ${err.message}`);
     return null;
