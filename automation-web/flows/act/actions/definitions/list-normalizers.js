@@ -1,11 +1,33 @@
 "use strict";
 
-function stripTags(value) {
+function decodeEntities(value) {
   return String(value || "")
-    .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function stripTags(value) {
+  return decodeEntities(String(value || ""))
+    .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
+    .trim();
+}
+
+function preserveParagraphText(value) {
+  return decodeEntities(String(value || ""))
+    .replace(/<\s*br\s*\/?\s*>/gi, "\n")
+    .replace(/<\/(p|div|section|article|li|h1|h2|h3|h4|h5|h6)>/gi, "\n")
+    .replace(/<(p|div|section|article)>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "\n- ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/[\t\r ]+/g, " ")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
@@ -18,7 +40,7 @@ function summarizeText(value, limit = 180) {
 }
 
 function extractContentText(value, limit = 1200) {
-  const normalized = stripTags(value);
+  const normalized = preserveParagraphText(value);
   if (normalized.length <= limit) {
     return normalized;
   }
@@ -58,7 +80,7 @@ function normalizeZhihuUrl(url, questionId = "", answerId = "") {
 }
 
 function normalizeZhihuItem(item) {
-  const root = item?.object || item || {};
+  const root = item?.object || item?.target || item || {};
   const descriptionObject = root?.description?.object || {};
   const contentItems = Array.isArray(root?.content_items) ? root.content_items : [];
   const firstContentItem = contentItems[0] || {};
@@ -67,6 +89,7 @@ function normalizeZhihuItem(item) {
     .map((entry) => entry?.object)
     .find((entry) => entry && (entry.type === "answer" || entry.excerpt || entry.content))
     || (firstContentItem?.object?.type === "answer" ? firstContentItem.object : null)
+    || (root?.type === "answer" ? root : null)
     || null;
 
   const questionObject = firstAnswer?.question
@@ -103,9 +126,11 @@ function normalizeZhihuItem(item) {
 
   const summary = summarizeText(
     firstAnswer?.excerpt
+      || firstAnswer?.excerpt_new
       || firstAnswer?.content
       || descriptionObject?.description
       || root?.excerpt
+      || root?.excerpt_new
       || root?.description
       || title
   );
@@ -113,7 +138,14 @@ function normalizeZhihuItem(item) {
   const questionId = String(firstAnswer?.question?.id || questionObject?.id || descriptionObject?.id || "").trim();
   const answerId = String(firstAnswer?.id || "").trim();
   const detailUrl = normalizeZhihuUrl(firstAnswer?.url || descriptionObject?.url || root?.url || "", questionId, answerId);
-  const likes = Number(firstAnswer?.voteup_count ?? root?.voteup_count ?? descriptionObject?.voteup_count ?? 0) || 0;
+  const likes = Number(
+    firstAnswer?.voteup_count
+      ?? firstAnswer?.reaction?.statistics?.like_count
+      ?? root?.voteup_count
+      ?? root?.reaction?.statistics?.like_count
+      ?? descriptionObject?.voteup_count
+      ?? 0
+  ) || 0;
 
   return {
     title,

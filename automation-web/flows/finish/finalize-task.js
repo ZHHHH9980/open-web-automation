@@ -97,18 +97,21 @@ function buildActionNotExecutableResult({ task, step, url, plannedAction, reason
   });
 }
 
-function buildHumanPauseResult({ task, step, url, reason, block }) {
+function buildHumanPauseResult({ task, step, url, reason, block, screenshot, screenshotPath }) {
   const detail = String(reason || block?.reason || "paused for human intervention").trim();
   return toResult({
     success: false,
     exit_code: 2,
     message: detail,
+    screenshot,
     meta: {
       requires_human: true,
       task,
       step,
       url,
       human_block: block || undefined,
+      screenshot_path: screenshotPath || undefined,
+      retry_hint: "请完成登录后重新执行同一个任务",
     },
   });
 }

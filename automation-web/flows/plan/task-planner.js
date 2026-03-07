@@ -131,6 +131,7 @@ function buildPlanningPrompt(task, state, maxSteps, commonSites = {}) {
     "- If detail_open_mode=goto_item_url, goto with {{item_n_url}} placeholders is allowed after scrape_list succeeds",
     "- Only use scrape_list on sites that explicitly define api.list in site-config",
     "- Only use scrape_detail on sites that explicitly define api.detail in site-config",
+    "- For Zhihu current-user pages, after a page load that triggers api/v4/me, you may use goto URLs with placeholders like {{current_user_following_url}}, {{current_user_followers_url}}, {{current_user_answers_url}}, {{current_user_posts_url}}",
     "- Prefer direct search URL navigation when the site supports search and the task includes explicit keywords",
     "- Final step must be 'done' with result summary",
     ""

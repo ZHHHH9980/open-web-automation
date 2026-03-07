@@ -87,7 +87,7 @@ cd ..
 当前能力更完整的主要是：
 
 - `xiaohongshu.com`：支持搜索 URL、列表 API、详情 API
-- `zhihu.com`：支持搜索 URL、列表 API
+- `zhihu.com`：支持搜索 URL、搜索结果列表 API、首页浏览 feed API
 
 其他站点目前主要提供 URL 级别的起始导航和基础 planning 信息，还没有完整的 list/detail API 提取链路。
 
@@ -113,7 +113,7 @@ CLI 会输出一行 JSON，核心字段如下：
 }
 ```
 
-如果有采集结果，程序还会额外把总结和原始采集内容写到 `/tmp/owa_result_*.txt`。
+如果有采集结果，程序还会额外把总结和便于阅读的结构化结果写到 `outputs/YYYY-MM-DD_HH-mm-ss_platform.md`。
 
 ## 常用环境变量
 
@@ -182,8 +182,10 @@ node launcher.js "去知乎看看热榜"
 
 - 看 stderr 中的 `[agent]` 进度日志
 - 查看返回 JSON 里的 `meta.steps`
-- 查看 `/tmp/owa_result_*.txt`
+- 查看 `outputs/YYYY-MM-DD_HH-mm-ss_platform.md`
 - 临时加上 `--debug-mode=true`
+- 用 `npm run debug:collect-state -- "https://www.zhihu.com/"` 检查实际捕获到的接口
+- 用 `npm run debug:scrape -- "https://www.zhihu.com/"` 快速查看页面 DOM / 链接 / JSON 响应
 
 ## 注意
 

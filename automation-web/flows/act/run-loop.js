@@ -5,6 +5,7 @@ const { executeDecision } = require("./executor");
 const { canExecutePlan, explainCannotExecutePlan } = require("../plan/task-planner");
 const { finalizeCompletedTask, buildTimeoutResult, buildPlanExhaustedResult, buildActionNotExecutableResult, buildHumanPauseResult, buildMaxStepsResult } = require("../finish/finalize-task");
 const { normalizeText, logProgress } = require("../../shared/utils");
+const { makeScreenshot } = require("../init/browser");
 const { data: dataHandler, listen: listenHandler } = require("./actions");
 
 async function runExecutionLoop(params) {
@@ -42,6 +43,17 @@ async function runExecutionLoop(params) {
     if (state.human_block) {
       requiresHuman = true;
       logProgress(progress, `human intervention required: ${state.human_block.reason}`);
+
+      let screenshotPath = "";
+      let screenshotBase64 = "";
+      try {
+        const screenshot = await makeScreenshot(page, "human-block");
+        screenshotPath = screenshot.filePath || "";
+        screenshotBase64 = screenshot.base64 || "";
+      } catch (err) {
+        logProgress(progress, `human-block screenshot failed: ${normalizeText(err.message || err)}`);
+      }
+
       return {
         result: buildHumanPauseResult({
           task,
@@ -49,6 +61,8 @@ async function runExecutionLoop(params) {
           url: state.url,
           reason: state.human_block.reason,
           block: state.human_block,
+          screenshot: screenshotBase64,
+          screenshotPath,
         }),
         requiresHuman,
       };

@@ -10,8 +10,8 @@
  *    或使用现有 profile: --user-data-dir="$HOME/Library/Application Support/Google/Chrome"
  *
  * 2. 运行测试：
- *    node test-scrape.js "https://www.zhihu.com/search?q=AI"
- *    node test-scrape.js "https://www.bilibili.com/search?keyword=编程"
+ *    node debug/scrape.js "https://www.zhihu.com/search?q=AI"
+ *    node debug/scrape.js "https://www.bilibili.com/search?keyword=编程"
  */
 
 const { chromium } = require("playwright");
@@ -186,10 +186,10 @@ async function testScrape(url) {
 
   if (!url) {
     console.error(`\n❌ 请提供要测试的 URL`);
-    console.error(`\n用法: node test-scrape.js <URL>`);
+    console.error(`\n用法: node debug/scrape.js <URL>`);
     console.error(`\n示例:`);
-    console.error(`  node test-scrape.js "https://www.zhihu.com/search?q=AI"`);
-    console.error(`  node test-scrape.js "https://www.bilibili.com/search?keyword=编程"`);
+    console.error(`  node debug/scrape.js "https://www.zhihu.com/search?q=AI"`);
+    console.error(`  node debug/scrape.js "https://www.bilibili.com/search?keyword=编程"`);
     console.error(`\n提示: 先启动浏览器:`);
     console.error(
       `  /Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222 --user-data-dir="$HOME/Library/Application Support/Google/Chrome"`

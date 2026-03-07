@@ -6,7 +6,7 @@
  */
 
 const { chromium } = require("playwright");
-const { collectPageState, startApiCollection } = require("./flows/act/state-collector");
+const { collectPageState, startApiCollection } = require("../flows/act/state-collector");
 
 async function testCollectState(url) {
   console.log(`\n🔗 连接到浏览器...`);

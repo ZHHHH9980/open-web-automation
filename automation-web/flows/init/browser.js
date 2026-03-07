@@ -7,6 +7,7 @@ const http = require("http");
 const https = require("https");
 const { spawn } = require("child_process");
 const { getRuntimeBrowserConfig } = require("../../config/browser-config");
+const { getOutputDir } = require("../../shared/utils");
 
 async function safeClickByText(page, textList) {
   for (const text of textList) {
@@ -33,7 +34,7 @@ async function grabBodyText(page, limit = 3000) {
 }
 
 function ensureScreenshotDir() {
-  const dir = path.join(os.tmpdir(), "open-web-automation-shots");
+  const dir = path.join(getOutputDir(), "screenshots");
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }

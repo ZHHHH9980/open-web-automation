@@ -49,6 +49,9 @@ const SITE_CONFIG = {
         endpoint: "https://www.zhihu.com/api/v4/search_v3",
         items_path: "data",
         item_url_path: "object.url",
+        browse_endpoint: "https://www.zhihu.com/api/v3/feed/topstory/recommend",
+        browse_items_path: "data",
+        browse_item_url_path: "target.url",
       },
     },
     selectors: {

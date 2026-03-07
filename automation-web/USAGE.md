@@ -60,7 +60,7 @@ OWA_AGENT_DEBUG=0
 
 - 在 stdout 输出一行 JSON 结果
 - 在 stderr 输出执行进度日志（默认开启）
-- 在有采集内容时生成 `/tmp/owa_result_*.txt`
+- 在有采集内容时生成 `outputs/YYYY-MM-DD_HH-mm-ss_platform.md`
 
 ## 调试建议
 

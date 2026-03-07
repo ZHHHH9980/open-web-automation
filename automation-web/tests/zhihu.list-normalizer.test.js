@@ -81,3 +81,32 @@ test("filters out Zhihu people-style noise results", () => {
 
   assert.equal(items.length, 1);
 });
+
+
+test("normalizes Zhihu browse feed items", () => {
+  const [item] = normalizeListItems(
+    { url: "https://www.zhihu.com/" },
+    [{
+      type: "feed",
+      target: {
+        id: "2013167499231900461",
+        type: "answer",
+        excerpt: "昨天晚上刚看完的发布会，基本就是跪着看完的。",
+        content: "<p>昨天晚上刚看完的发布会，</p><p>基本就是跪着看完的。</p>",
+        voteup_count: 458,
+        url: "https://api.zhihu.com/answers/2013167499231900461",
+        author: { name: "涂朗" },
+        question: {
+          id: "10783732020",
+          title: "比亚迪会倒闭吗？"
+        }
+      }
+    }]
+  );
+
+  assert.equal(item.title, "比亚迪会倒闭吗？");
+  assert.equal(item.author, "涂朗");
+  assert.equal(item.likes, 458);
+  assert.equal(item.detail_url, "https://www.zhihu.com/question/10783732020/answer/2013167499231900461");
+  assert.match(item.content_summary, /昨天晚上刚看完的发布会/);
+});

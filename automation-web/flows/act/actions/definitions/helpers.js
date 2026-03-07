@@ -41,8 +41,120 @@ function fillTemplate(template, data) {
   });
 }
 
+function resolveConfiguredApi(state, apiKind) {
+  const siteConfig = getSiteConfig(state?.url || "");
+  const rawApiConfig = siteConfig?.api?.[apiKind] || null;
+
+  if (!rawApiConfig) {
+    return { siteConfig, apiConfig: null, endpoint: "" };
+  }
+
+  if (typeof rawApiConfig === "string") {
+    return {
+      siteConfig,
+      apiConfig: { endpoint: rawApiConfig },
+      endpoint: rawApiConfig,
+    };
+  }
+
+  let resolvedConfig = { ...rawApiConfig };
+
+  try {
+    const current = new URL(String(state?.url || ""));
+    const isSearchPage = /\/search\b/.test(current.pathname) || Boolean(current.searchParams.get("q"));
+
+    if (!isSearchPage && rawApiConfig.browse_endpoint) {
+      resolvedConfig = {
+        ...rawApiConfig,
+        endpoint: rawApiConfig.browse_endpoint,
+        items_path: rawApiConfig.browse_items_path || rawApiConfig.items_path,
+        item_url_path: rawApiConfig.browse_item_url_path || rawApiConfig.item_url_path,
+      };
+    }
+  } catch (_err) {
+    // ignore URL parse issues and keep the default endpoint
+  }
+
+  return {
+    siteConfig,
+    apiConfig: resolvedConfig,
+    endpoint: resolvedConfig?.endpoint || "",
+  };
+}
+
+function getApiResponses(state, context = {}) {
+  const collectorData = context.currentApiCollector?.getData?.();
+  if (Array.isArray(collectorData) && collectorData.length > 0) {
+    return collectorData;
+  }
+  return state?.api_responses || [];
+}
+
+function resolveCurrentUserProfile(state, context = {}) {
+  const apiResponses = getApiResponses(state, context);
+  const meResponse = [...apiResponses]
+    .reverse()
+    .find((item) => String(item.url || "").startsWith("https://www.zhihu.com/api/v4/me"));
+
+  const data = meResponse?.data || {};
+  const urlToken = String(data.url_token || "").trim();
+  if (!urlToken) {
+    return { ok: false, error: "current Zhihu user profile was not captured from api/v4/me" };
+  }
+
+  return {
+    ok: true,
+    url_token: urlToken,
+    profile_url: `https://www.zhihu.com/people/${urlToken}`,
+    following_url: `https://www.zhihu.com/people/${urlToken}/following`,
+    followers_url: `https://www.zhihu.com/people/${urlToken}/followers`,
+    answers_url: `https://www.zhihu.com/people/${urlToken}/answers`,
+    posts_url: `https://www.zhihu.com/people/${urlToken}/posts`,
+  };
+}
+
+function resolveCurrentUserPlaceholder(rawUrl, state, context = {}) {
+  const placeholders = {
+    current_user_url_token: "url_token",
+    current_user_profile_url: "profile_url",
+    current_user_following_url: "following_url",
+    current_user_followers_url: "followers_url",
+    current_user_answers_url: "answers_url",
+    current_user_posts_url: "posts_url",
+  };
+
+  const matches = Array.from(String(rawUrl || "").matchAll(/\{\{([^}]+)\}\}/g));
+  if (matches.length === 0) {
+    return { ok: true, url: String(rawUrl || "") };
+  }
+
+  const needsCurrentUser = matches.some((match) => Object.prototype.hasOwnProperty.call(placeholders, match[1]));
+  if (!needsCurrentUser) {
+    return { ok: true, url: String(rawUrl || "") };
+  }
+
+  const profile = resolveCurrentUserProfile(state, context);
+  if (!profile.ok) {
+    return { ok: false, error: profile.error };
+  }
+
+  let resolved = String(rawUrl || "");
+  for (const match of matches) {
+    const key = match[1];
+    if (!Object.prototype.hasOwnProperty.call(placeholders, key)) continue;
+    resolved = resolved.replace(match[0], String(profile[placeholders[key]] || ""));
+  }
+
+  return { ok: true, url: resolved };
+}
+
 function resolveCapturedItemUrl(actionUrl, context = {}, state) {
-  const rawUrl = String(actionUrl || "").trim();
+  const placeholderResolved = resolveCurrentUserPlaceholder(actionUrl, state, context);
+  if (!placeholderResolved.ok) {
+    return placeholderResolved;
+  }
+
+  const rawUrl = String(placeholderResolved.url || "").trim();
   const match = rawUrl.match(/^\{\{item_(\d+)_url\}\}$/);
   if (!match) {
     return { ok: true, url: rawUrl };
@@ -55,8 +167,7 @@ function resolveCapturedItemUrl(actionUrl, context = {}, state) {
   }
 
   const item = listData[index];
-  const siteConfig = getSiteConfig(state?.url || "");
-  const listConfig = siteConfig?.api?.list || {};
+  const listConfig = resolveConfiguredApi(state, "list").apiConfig || {};
 
   const directUrl = listConfig.item_url_path ? getValueByPath(item, listConfig.item_url_path) : item.url;
   if (directUrl) {
@@ -78,9 +189,7 @@ function resolveCapturedItemUrl(actionUrl, context = {}, state) {
 }
 
 function findConfiguredApiResponse(state, apiKind, options = {}) {
-  const siteConfig = getSiteConfig(state?.url || "");
-  const apiConfig = siteConfig?.api?.[apiKind] || null;
-  const endpoint = typeof apiConfig === "string" ? apiConfig : apiConfig?.endpoint || "";
+  const { siteConfig, apiConfig, endpoint } = resolveConfiguredApi(state, apiKind);
 
   if (!endpoint) {
     return { ok: false, error: `current site does not define api.${apiKind}` };
@@ -116,6 +225,9 @@ module.exports = {
   resolveSelector,
   hasCandidateTarget,
   getValueByPath,
+  getApiResponses,
+  resolveConfiguredApi,
+  resolveCurrentUserProfile,
   resolveCapturedItemUrl,
   findConfiguredApiResponse,
 };
