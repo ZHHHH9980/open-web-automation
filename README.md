@@ -33,9 +33,11 @@ node automation-web/run-agent-task.js "去小红书搜索 AI Agent，返回前 3
 ### 1. 启动浏览器
 
 ```bash
-# 启动 Chrome（开启 CDP 端口 9222）
+# 可选：手动启动 Chrome（未启动时任务会自动拉起）
 ./start-chrome.sh
 ```
+首次配置好 `automation-web/config/browser.json` 后，日常直接跑任务即可；只有你想复用已有登录窗口时才需要手动先启动。
+
 
 ### 2. 执行任务
 
@@ -136,6 +138,7 @@ OWA_AGENT_MODEL=claude-sonnet-4-6  # 使用的 LLM 模型
 ANTHROPIC_API_KEY=sk-ant-...    # Claude API 密钥
 
 # 浏览器配置
+WEB_CDP_AUTO_LAUNCH=0            # 关闭“连不上就自动拉起 Chrome”
 WEB_CDP_URL=http://127.0.0.1:9222  # Chrome CDP 地址
 WEB_KEEP_OPEN=1                 # 任务完成后保持浏览器打开
 WEB_TASK_TIMEOUT_MS=180000      # 任务超时时间（3分钟）

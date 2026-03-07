@@ -1,6 +1,6 @@
 "use strict";
 
-const { canHandleClick, executePlatformClick } = require("../../platform-adapter");
+const { canHandleClick, executePlatformClick, explainClickSupport } = require("../../platform-adapter");
 
 module.exports = {
   name: "click",
@@ -17,6 +17,9 @@ module.exports = {
   ],
   canExecute(action, state) {
     return canHandleClick(action, state);
+  },
+  explainCanExecute(action, state) {
+    return explainClickSupport(action, state);
   },
   async execute(page, action, state, context = {}) {
     context.lastNavigationTriggerAt = Date.now();

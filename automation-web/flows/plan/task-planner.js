@@ -166,7 +166,23 @@ function canExecutePlan(plannedAction, state, context = {}) {
   return definition.canExecute(plannedAction, state, context);
 }
 
+function explainCannotExecutePlan(plannedAction, state, context = {}) {
+  const definition = getActionDefinition(plannedAction?.action);
+  if (!definition) {
+    return `missing action definition for ${plannedAction?.action || "unknown"}`;
+  }
+  if (typeof definition.explainCanExecute === "function") {
+    const reason = definition.explainCanExecute(plannedAction, state, context);
+    return String(reason || "").trim();
+  }
+  if (typeof definition.canExecute !== "function") {
+    return `action ${plannedAction?.action || "unknown"} does not implement canExecute`;
+  }
+  return `action ${plannedAction?.action || "unknown"} returned canExecute=false`;
+}
+
 module.exports = {
   generatePlan,
   canExecutePlan,
+  explainCannotExecutePlan,
 };

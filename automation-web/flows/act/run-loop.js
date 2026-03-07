@@ -2,8 +2,8 @@
 
 const { collectPageState } = require("./state-collector");
 const { executeDecision } = require("./executor");
-const { canExecutePlan } = require("../plan/task-planner");
-const { finalizeCompletedTask, buildTimeoutResult, buildPlanExhaustedResult, buildActionNotExecutableResult, buildMaxStepsResult } = require("../finish/finalize-task");
+const { canExecutePlan, explainCannotExecutePlan } = require("../plan/task-planner");
+const { finalizeCompletedTask, buildTimeoutResult, buildPlanExhaustedResult, buildActionNotExecutableResult, buildHumanPauseResult, buildMaxStepsResult } = require("../finish/finalize-task");
 const { normalizeText, logProgress } = require("../../shared/utils");
 const { data: dataHandler, listen: listenHandler } = require("./actions");
 
@@ -39,6 +39,21 @@ async function runExecutionLoop(params) {
     const state = await collectPageState(page, step, 0, executionContext.currentApiCollector);
     lastUrl = state.url || lastUrl;
 
+    if (state.human_block) {
+      requiresHuman = true;
+      logProgress(progress, `human intervention required: ${state.human_block.reason}`);
+      return {
+        result: buildHumanPauseResult({
+          task,
+          step,
+          url: state.url,
+          reason: state.human_block.reason,
+          block: state.human_block,
+        }),
+        requiresHuman,
+      };
+    }
+
     logProgress(progress, `step ${step}/${maxSteps} url=${state.url || "about:blank"} planning...`);
 
     if (!executionPlan || executionPlan.length === 0) {
@@ -49,9 +64,11 @@ async function runExecutionLoop(params) {
     }
 
     const plannedAction = executionPlan.shift();
-    if (!canExecutePlan(plannedAction, state)) {
+    if (!canExecutePlan(plannedAction, state, executionContext)) {
+      const reason = explainCannotExecutePlan(plannedAction, state, executionContext);
+      logProgress(progress, `planned action not executable: ${plannedAction.action}${reason ? ` | ${reason}` : ""}`);
       return {
-        result: buildActionNotExecutableResult({ task, step, url: state.url, plannedAction }),
+        result: buildActionNotExecutableResult({ task, step, url: state.url, plannedAction, reason }),
         requiresHuman,
       };
     }

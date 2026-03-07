@@ -78,12 +78,38 @@ function buildPlanExhaustedResult({ task, step, url }) {
   });
 }
 
-function buildActionNotExecutableResult({ task, step, url, plannedAction }) {
+function buildActionNotExecutableResult({ task, step, url, plannedAction, reason }) {
+  const detail = String(reason || "").trim();
   return toResult({
     success: false,
     exit_code: 4,
-    message: `planned action not executable: ${plannedAction.action}`,
-    meta: { requires_human: false, task, step, url, planned_action: plannedAction },
+    message: detail
+      ? `planned action not executable: ${plannedAction.action} (${detail})`
+      : `planned action not executable: ${plannedAction.action}`,
+    meta: {
+      requires_human: false,
+      task,
+      step,
+      url,
+      planned_action: plannedAction,
+      not_executable_reason: detail || undefined,
+    },
+  });
+}
+
+function buildHumanPauseResult({ task, step, url, reason, block }) {
+  const detail = String(reason || block?.reason || "paused for human intervention").trim();
+  return toResult({
+    success: false,
+    exit_code: 2,
+    message: detail,
+    meta: {
+      requires_human: true,
+      task,
+      step,
+      url,
+      human_block: block || undefined,
+    },
   });
 }
 
@@ -117,14 +143,16 @@ function buildAgentFailureResult({ task, history, error, lastUrl }) {
 }
 
 async function cleanupRuntime({ page, browser, keepOpen, keepOpenOnHuman, requiresHuman }) {
+  const shouldKeepOpen = keepOpen || (keepOpenOnHuman && requiresHuman);
+
   if (page) {
-    if (keepOpen) {
-      // keep current tab untouched
-    } else if (keepOpenOnHuman && requiresHuman) {
-      try {
-        await markHumanPauseTab(page);
-      } catch (_err) {
-        // ignore
+    if (shouldKeepOpen) {
+      if (requiresHuman) {
+        try {
+          await markHumanPauseTab(page);
+        } catch (_err) {
+          // ignore
+        }
       }
     } else {
       try {
@@ -137,7 +165,11 @@ async function cleanupRuntime({ page, browser, keepOpen, keepOpenOnHuman, requir
 
   if (browser) {
     try {
-      await browser.close();
+      if (shouldKeepOpen && typeof browser.disconnect === "function") {
+        await browser.disconnect();
+      } else {
+        await browser.close();
+      }
     } catch (_err) {
       // ignore
     }
@@ -151,6 +183,7 @@ module.exports = {
   buildInitialUrlFailureResult,
   buildPlanExhaustedResult,
   buildActionNotExecutableResult,
+  buildHumanPauseResult,
   buildMaxStepsResult,
   buildAgentFailureResult,
   cleanupRuntime,

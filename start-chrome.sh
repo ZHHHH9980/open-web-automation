@@ -6,7 +6,7 @@ CONFIG_FILE="automation-web/config/browser.json"
 # 检查配置文件是否存在
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "配置文件不存在，首次使用需要配置"
-  echo "运行: node automation-web/config/browser-config.js"
+  echo "运行: node automation-web/config/init-browser.js"
   exit 1
 fi
 
@@ -36,7 +36,7 @@ echo "Profile Directory: $PROFILE_DIR"
 
 echo "Chrome 已启动，PID: $!"
 echo ""
-echo "现在可以运行："
+echo "现在可以运行（通常直接跑任务就行）："
 echo "  cd automation-web"
 echo "  node run-agent-task.js \"打开闲鱼，搜索 iPhone\""
 

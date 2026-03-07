@@ -17,6 +17,10 @@ module.exports = {
   canExecute(_action, state) {
     return findConfiguredApiResponse(state, "detail").ok;
   },
+  explainCanExecute(_action, state) {
+    const matched = findConfiguredApiResponse(state, "detail");
+    return matched.ok ? "" : matched.error;
+  },
   async execute(_page, _action, state, context = {}) {
     const matched = findConfiguredApiResponse(state, "detail", {
       minTimestamp: context.lastNavigationTriggerAt || 0,

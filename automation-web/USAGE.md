@@ -33,7 +33,7 @@ CDP 端口 (默认 9222):
 ✓ 配置已保存到: config/browser.json
 ```
 
-### 2. 启动浏览器
+### 2. 可选：手动启动浏览器
 
 ```bash
 cd ..
@@ -44,6 +44,8 @@ cd ..
 1. 读取 `config/browser.json`
 2. 使用配置的 profile 启动 Chrome
 3. 开启 CDP 端口（默认 9222）
+
+> 不手动执行也可以：`run-agent-task.js` 在发现 CDP 未启动时会自动拉起本地 Chrome。
 
 ## 日常使用
 

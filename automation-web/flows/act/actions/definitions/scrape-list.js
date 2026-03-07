@@ -19,6 +19,10 @@ module.exports = {
   canExecute(_action, state) {
     return findConfiguredApiResponse(state, "list").ok;
   },
+  explainCanExecute(_action, state) {
+    const matched = findConfiguredApiResponse(state, "list");
+    return matched.ok ? "" : matched.error;
+  },
   async execute(_page, action, state) {
     const matched = findConfiguredApiResponse(state, "list");
     if (!matched.ok) {

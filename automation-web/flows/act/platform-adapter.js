@@ -14,6 +14,16 @@ function canHandleClick(action, state) {
   return action?.target_id != null && isXiaohongshuSearchResult(state);
 }
 
+function explainClickSupport(action, state) {
+  if (action?.target_id == null) {
+    return "click requires target_id";
+  }
+  if (!isXiaohongshuSearchResult(state)) {
+    return `click is not supported on current page: ${state?.url || "unknown"}`;
+  }
+  return "";
+}
+
 async function executeXiaohongshuClick(page, action, state, context = {}) {
   const siteConfig = getSiteConfig(state?.url || "");
   const articleLinkSelector = siteConfig?.selectors?.article_link || ".note-item a[href]";
@@ -97,5 +107,6 @@ async function executePlatformClick(page, action, state, context = {}) {
 
 module.exports = {
   canHandleClick,
+  explainClickSupport,
   executePlatformClick,
 };

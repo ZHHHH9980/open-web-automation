@@ -124,7 +124,9 @@ function determineInitialUrl(taskAnalysis, progress) {
  */
 async function initializeBrowser(cdpUrl, initialUrl, progress, opts = {}) {
   logProgress(progress, "opening browser...");
-  const conn = await connectBrowser(cdpUrl);
+  const conn = await connectBrowser(cdpUrl, {
+    onStatus: (msg) => logProgress(progress, msg),
+  });
   const browser = conn.browser;
   const page = await getAutomationPage(conn.context);
   page.setDefaultTimeout(12000);

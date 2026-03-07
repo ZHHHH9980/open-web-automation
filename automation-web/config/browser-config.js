@@ -86,6 +86,18 @@ function getDefaultChromePath() {
 }
 
 /**
+ * 解析运行时浏览器配置
+ */
+function getRuntimeBrowserConfig(cdpUrl) {
+  const saved = loadBrowserConfig() || {};
+  return {
+    cdpUrl: process.env.WEB_CDP_URL || cdpUrl || saved.cdpUrl || 'http://127.0.0.1:9222',
+    profilePath: process.env.WEB_CHROME_PROFILE || saved.profilePath || '',
+    chromePath: process.env.WEB_CHROME_PATH || saved.chromePath || getDefaultChromePath() || ''
+  };
+}
+
+/**
  * 初始化配置（首次使用）
  */
 async function initBrowserConfig() {
@@ -174,6 +186,7 @@ module.exports = {
   saveBrowserConfig,
   detectChromeProfiles,
   getDefaultChromePath,
+  getRuntimeBrowserConfig,
   initBrowserConfig,
   getBrowserConfig
 };
