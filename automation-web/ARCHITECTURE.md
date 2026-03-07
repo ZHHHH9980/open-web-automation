@@ -1,170 +1,124 @@
-# 核心架构与链路
+# ARCHITECTURE.md
 
-这是一个 **Agent 驱动的 Web 自动化系统**，本文档描述系统的核心链路和架构设计。
+## 主链路
 
-## 1. 入口层（run-agent-task.js）
+当前项目的主执行链路很简单：
 
-```
-用户输入任务 → 路由决策 → 执行 → 总结输出
-```
-
-### 两种执行模式
-
-#### A. 配置模式（快速路径）
-
-- 检测站点名（如"闲鱼"）
-- 加载站点配置（`config/sites/闲鱼.json`）
-- Phase 1：LLM 分析任务，提取搜索词
-- 直接执行配置的搜索流程（无需截图）
-- **成本：1 次 LLM 调用 + 0 次截图**
-
-#### B. 完全动态模式（通用路径）
-
-- 调用 `runAgentTask()` 进入 Agent 循环
-- **成本：~$0.30（多次 LLM + 截图）**
-
-## 2. Agent 核心循环（flows/orchestrator.js）
-
-```
-┌─────────────────────────────────────────────────┐
-│  Step 1: Seed Navigation                        │
-│  - 站点识别系统猜测起始 URL（硬编码站点）        │
-│  - 清理浏览器状态 → goto seed URL               │
-└─────────────────────────────────────────────────┘
-                    ↓
-┌─────────────────────────────────────────────────┐
-│  Step 2+: Agent 循环（最多 15 步）               │
-│                                                  │
-│  1. 收集页面状态                                 │
-│     - 截图（JPEG, quality=20）                  │
-│     - 记录已捕获的 API 响应                    │
-│     - 获取页面文本（前 2000 字符）              │
-│                                                  │
-│  2. Phase 1: 任务分析（首次）                    │
-│     - LLM 分析任务 → 提取 hard_filters          │
-│     - 提取 preferences、steps                   │
-│                                                  │
-│  3. Phase 2: 执行决策                           │
-│     - 构建 prompt（带 plan + 截图 + history）   │
-│     - LLM 返回 JSON 决策                        │
-│       {action: "scrape_list", max_items: 10}    │
-│                                                  │
-│  4. 执行动作                                     │
-│     - listen/goto/scrape_*/back/wait            │
-│     - API-first，不依赖 DOM 点击                │
-│                                                  │
-│  5. 循环检测                                     │
-│     - 检测截图大小 + URL 是否重复               │
-│     - 防止无限循环                              │
-│                                                  │
-│  6. Phase 3: 验证（done 时）                    │
-│     - 检查 hard_filters 是否满足                │
-│     - 检查任务目标是否达成                      │
-│     - 验证失败 → 继续执行                       │
-└─────────────────────────────────────────────────┘
-                    ↓
-┌─────────────────────────────────────────────────┐
-│  返回结果                                        │
-│  - success/fail/pause                           │
-│  - 截图、URL、步骤历史                          │
-└─────────────────────────────────────────────────┘
+```text
+launcher.js
+  -> flows/orchestrator.js
+  -> flows/init/task-initializer.js
+  -> flows/plan/task-planner.js
+  -> planners/*
+  -> flows/act/run-loop.js
+  -> flows/act/executor.js
+  -> flows/finish/finalize-task.js
 ```
 
-## 3. 三阶段 Prompt 系统（prompts/）
+## 模块说明
 
-### Phase 1: Analysis（分析）
+### `launcher.js`
 
-- **输入**：任务描述
-- **输出**：`{hard_filters, preferences, steps, target_site}`
-- **作用**：提取约束条件，避免"最便宜但违反条件"的问题
+命令行入口。
 
-### Phase 2: Execution（执行）
+负责接收任务参数，调用 `runAgentTask()`，并输出最终 JSON 结果。
 
-- **输入**：任务 + plan + 截图 + 候选元素 + history
-- **输出**：`{action, x, y, target_id, reason}`
-- **作用**：每步决策，vision-first（坐标优先）
+### `flows/orchestrator.js`
 
-### Phase 3: Verification（验证）
+主调度器。
 
-- **输入**：任务 + plan + 当前页面状态
-- **输出**：`{verified: true/false, reason}`
-- **作用**：防止过早 done，确保真正完成
+负责串起整条执行流程：
 
-## 4. 站点识别系统（site-config.js）
+- 生成执行计划
+- 解析初始 URL
+- 初始化浏览器
+- 进入执行循环
+- 在结束后清理运行时资源
 
-**策略：URL 提取 > 硬编码站点 > Google 搜索**
+### `flows/init/task-initializer.js`
 
-### 硬编码常用站点
+初始化阶段。
 
-```javascript
-const COMMON_SITES = {
-  "小红书": "xiaohongshu.com",
-  "知乎": "zhihu.com",
-  "b站": "bilibili.com",
-  "闲鱼": "goofish.com",
-  "淘宝": "taobao.com",
-  // ... 更多站点
-};
-```
+负责三件事：
 
-### URL 猜测逻辑
+- 调用 planner 生成 `analysis + plan`
+- 根据任务分析结果确定初始 URL
+- 连接浏览器并打开页面
 
-1. **URL 提取**：任务中包含 `https://...` 直接使用
-2. **关键词匹配**：任务包含"小红书" → `https://www.xiaohongshu.com/`
-3. **Google 兜底**：未匹配到 → Google 搜索
+### `flows/plan/task-planner.js`
 
-## 5. 关键设计
+计划生成层。
 
-1. **API-First**：优先依赖已捕获的结构化接口响应
-2. **3-Phase Prompt**：分析 → 执行 → 验证，提高准确性
-3. **硬编码站点 + Google 兜底**：常用站点硬编码，未知站点 Google 搜索
-4. **循环检测**：防止 Agent 陷入无限循环
+负责构造 prompt，约束 planner 输出统一格式的：
 
-## 6. 数据流
+- `analysis`
+- `plan[]`
 
-```
-用户任务
-  ↓
-站点识别（硬编码 / Google）
-  ↓
-Agent 循环（LLM + 截图）
-  ↓
-总结生成（conclusion）
-  ↓
-返回结果
-```
+它也会把当前支持的动作和站点 planning 信息提供给 planner。
 
-## 文件结构
+### `planners/*`
 
-```
-automation-web/
-├── run-agent-task.js      # 入口：任务执行
-├── flows/orchestrator.js           # Agent 核心循环
-├── planners/              # Planner 后端适配层
-│   ├── index.js           # 自动选择 planner 后端
-│   ├── codex.js           # Codex planner
-│   ├── openai.js          # OpenAI planner
-│   └── claude.js          # Claude planner
-├── core/                  # 核心运行时
-│   ├── site-config.js     # 站点知识与 URL/API 配置
-│   ├── task-planner.js    # 任务分析 + 执行计划生成
-│   ├── task-initializer.js# 根据 planner 结果初始化任务
-│   ├── browser.js         # 浏览器连接与 automation tab 管理
-│   ├── executor.js        # 原子动作执行
-│   └── ...
-└── core/                  # 基础设施
-    ├── browser.js         # Playwright 封装
-    ├── result.js          # 结果协议
-    └── loop-detector.js   # 循环检测
-```
+模型后端适配层。
 
-## 性能特征
+- `planners/index.js`：按环境变量选择后端
+- `planners/claude.js`：Claude 后端
+- `planners/openai.js`：OpenAI/API 后端
+- `planners/codex.js`：Codex 后端
 
-- **启动速度**：硬编码常用站点，零学习成本
-- **代码密度**：~1000 行核心代码支撑完整的 Web 自动化
-- **容错性**：Agent 自我纠错 + Google 搜索兜底
+### `flows/act/run-loop.js`
 
-## 相关文档
+执行循环。
 
-- [CLAUDE.md](./CLAUDE.md) - 开发指南和约束规则
-- [USAGE.md](./USAGE.md) - 详细使用说明
+每一步都会：
+
+- 收集当前页面状态
+- 从 `executionPlan` 取下一个动作
+- 校验动作是否可执行
+- 执行动作
+- 记录 history
+- 判断是否完成、超时或需要人工介入
+
+### `flows/act/executor.js`
+
+动作执行分发层。
+
+根据 action 名称，把动作分发到对应的 action definition。
+
+### `flows/act/actions/*`
+
+主链路里的具体动作定义。
+
+当前执行链路主要依赖这些动作：
+
+- `listen`
+- `goto`
+- `scrape_list`
+- `scrape_detail`
+- `click`
+- `back`
+- `wait`
+- `done`
+- `fail`
+- `pause`
+
+### `flows/finish/finalize-task.js`
+
+收尾阶段。
+
+负责：
+
+- 组装统一结果结构
+- 汇总执行 history 和采集数据
+- 生成最终返回值
+- 按配置关闭或保留浏览器
+
+## 补充说明
+
+主链路的核心特点是：
+
+- 先规划，再执行
+- 执行时按 plan 顺序推进
+- 数据采集以 API-first 为主
+- 最终统一输出结果
+
+如果文档和实现不一致，以这些文件中的实际代码为准。

@@ -1,6 +1,7 @@
 "use strict";
 
 const { findConfiguredApiResponse, getValueByPath } = require("./helpers");
+const { normalizeListItem, isUsefulDisplayItem } = require("./list-normalizers");
 
 module.exports = {
   name: "scrape_list",
@@ -31,13 +32,25 @@ module.exports = {
 
     const maxItems = Number.isFinite(Number(action.max_items)) ? Number(action.max_items) : 50;
     const itemsPath = matched.apiConfig?.items_path || "data.items";
-    const items = Array.isArray(getValueByPath(matched.response.data, itemsPath))
-      ? getValueByPath(matched.response.data, itemsPath).slice(0, maxItems)
+    const allItems = Array.isArray(getValueByPath(matched.response.data, itemsPath))
+      ? getValueByPath(matched.response.data, itemsPath)
       : [];
 
-    if (items.length === 0) {
+    if (allItems.length === 0) {
       throw new Error(`scrape_list: configured endpoint returned no items at path '${itemsPath}' (${matched.endpoint})`);
     }
+
+    const normalizedEntries = allItems
+      .map((item) => ({ raw: item, display: normalizeListItem(state, item) }))
+      .filter((entry) => isUsefulDisplayItem(entry.display))
+      .slice(0, maxItems);
+
+    if (normalizedEntries.length === 0) {
+      throw new Error(`scrape_list: no usable structured items were derived from '${itemsPath}' (${matched.endpoint})`);
+    }
+
+    const items = normalizedEntries.map((entry) => entry.raw);
+    const displayItems = normalizedEntries.map((entry) => entry.display);
 
     return {
       done: false,
@@ -45,10 +58,11 @@ module.exports = {
         endpoint: matched.endpoint,
         items_path: itemsPath,
         items,
-        count: items.length,
+        display_items: displayItems,
+        count: displayItems.length,
         source: "api",
       },
-      note: `scrape_list: extracted ${items.length} items from ${matched.endpoint}`,
+      note: `scrape_list: extracted ${displayItems.length} items from ${matched.endpoint}`,
     };
   },
 };

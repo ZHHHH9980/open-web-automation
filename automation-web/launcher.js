@@ -3,8 +3,8 @@
 "use strict";
 
 const fs = require("fs");
-const path = require("path");
 const { runAgentTask } = require("./flows/orchestrator");
+const { loadCapturedEntries } = require("./flows/finish/data-handler");
 
 function writeJsonLine(obj) {
   return new Promise((resolve, reject) => {
@@ -13,6 +13,31 @@ function writeJsonLine(obj) {
       else resolve();
     });
   });
+}
+
+function renderStructuredItems(entries) {
+  const lines = [];
+
+  for (const entry of entries) {
+    const items = entry?.parsed?.items;
+    if (!Array.isArray(items) || items.length === 0) {
+      continue;
+    }
+
+    items.forEach((item, idx) => {
+      lines.push(`${idx + 1}. 标题：${item.title || "未命名"}`);
+      lines.push(`   作者：${item.author || "未知作者"}`);
+      lines.push(`   内容总结：${item.content_summary || ""}`);
+      if (item.article_content) {
+        lines.push(`   文章内容：${item.article_content}`);
+      }
+      lines.push(`   详情链接：${item.detail_url || ""}`);
+      lines.push(`   点赞数：${Number(item.likes) || 0}`);
+      lines.push("");
+    });
+  }
+
+  return lines.join("\n").trim();
 }
 
 function saveExtractedContent(result) {
@@ -44,9 +69,19 @@ function saveExtractedContent(result) {
   }
 
   if (extractionFile && fs.existsSync(extractionFile)) {
-    const extractedContent = fs.readFileSync(extractionFile, "utf-8");
-    content += "=== 采集的原始数据 ===\n\n";
-    content += extractedContent;
+    const entries = loadCapturedEntries(extractionFile);
+    const structuredContent = renderStructuredItems(entries);
+
+    if (structuredContent) {
+      content += "=== 结构化结果 ===\n\n";
+      content += structuredContent;
+      content += "\n\n";
+      content += `原始采集文件：${extractionFile}\n`;
+    } else {
+      const extractedContent = fs.readFileSync(extractionFile, "utf-8");
+      content += "=== 采集的原始数据 ===\n\n";
+      content += extractedContent;
+    }
   }
 
   fs.writeFileSync(outputFile, content, "utf-8");
@@ -68,11 +103,8 @@ function saveExtractedContent(result) {
     }
 
     const input = taskParts.join(" ");
-    const startTime = Date.now();
 
     const result = await runAgentTask(input, opts);
-
-    const duration = Date.now() - startTime;
 
     // 保存提取的内容到文件
     const outputFile = saveExtractedContent(result);

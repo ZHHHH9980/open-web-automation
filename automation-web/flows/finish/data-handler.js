@@ -6,10 +6,15 @@ const { generateConclusion } = require("./conclusion-generator");
 
 function serializeCapturedData(action, data) {
   if (action === "scrape_list") {
+    const displayItems = Array.isArray(data.display_items) && data.display_items.length > 0
+      ? data.display_items
+      : (data.items || []);
+
     return JSON.stringify({
       source: data.source || "api",
-      count: data.count || (Array.isArray(data.items) ? data.items.length : 0),
-      items: data.items || [],
+      endpoint: data.endpoint || "",
+      count: data.count || (Array.isArray(displayItems) ? displayItems.length : 0),
+      items: displayItems,
     }, null, 2);
   }
 
@@ -89,6 +94,7 @@ async function extractDomData(page, extractDom, progress) {
 
 module.exports = {
   storeCapturedData,
+  loadCapturedEntries,
   generateFinalConclusion,
   extractDomData,
 };

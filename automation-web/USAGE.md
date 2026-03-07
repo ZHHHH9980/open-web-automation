@@ -1,251 +1,80 @@
-# 使用指南
+# USAGE.md
 
-## 首次使用（一次性配置）
+## 最常用命令
 
-### 1. 配置浏览器 profile
+### 执行任务
 
 ```bash
-cd automation-web
+node launcher.js "去小红书搜索 openclaw，返回前 3 篇文章的标题和内容"
+```
+
+### 初始化浏览器配置
+
+```bash
 node config/init-browser.js
 ```
 
-系统会：
-1. 自动检测所有 Chrome profiles（Default, Profile 1, Profile 2, Profile 3, Profile 4）
-2. 让你选择要使用的 profile
-3. 保存配置到 `config/browser.json`
-
-**示例输出**：
-```
-=== 浏览器配置向导 ===
-
-检测到以下 Chrome profiles:
-
-  1. Default
-  2. Profile 1
-  3. Profile 2
-  4. Profile 3
-  5. Profile 4
-
-请选择 profile (1-5): 5
-
-CDP 端口 (默认 9222):
-
-✓ 配置已保存到: config/browser.json
-```
-
-### 2. 可选：手动启动浏览器
+### 手动启动 Chrome
 
 ```bash
 cd ..
 ./start-chrome.sh
 ```
 
-系统会：
-1. 读取 `config/browser.json`
-2. 使用配置的 profile 启动 Chrome
-3. 开启 CDP 端口（默认 9222）
+## 推荐使用方式
 
-> 不手动执行也可以：`run-agent-task.js` 在发现 CDP 未启动时会自动拉起本地 Chrome。
-
-## 日常使用
+### 1. 安装依赖
 
 ```bash
-# 执行任务（系统自动判断是否使用配置）
-node run-agent-task.js "打开闲鱼，搜索 iPhone 13 Pro"
+npm install
 ```
 
-**系统会自动**：
-1. 检测站点名（闲鱼）
-2. 检查是否有配置文件 `config/sites/闲鱼.json`
-3. 如果有配置 → 使用配置执行（成本 $0.00，速度 3 秒）
-4. 如果没有配置 → 使用完全动态模式（成本 $0.30，速度 30 秒）
-
-## 完整工作流程
-
-### 第一次使用某个站点
+### 2. 初始化本地浏览器配置（可选）
 
 ```bash
-# 1. 正常执行任务（完全动态模式）
-node run-agent-task.js "打开闲鱼，搜索 iPhone 13 Pro"
-
-# 输出：
-# [config] 站点 "闲鱼" 未配置
-# [config] 使用完全动态模式（成本: ~$0.30）
-# [config] 提示: 执行 3-5 次后运行 "node tools/config-site.js ..." 生成配置
-
-# 2. 多执行几次，积累数据
-node run-agent-task.js "打开闲鱼，搜索 Mac mini M1"
-node run-agent-task.js "打开闲鱼，搜索 iPad Air"
-
-# 3. 生成配置（一次性操作）
-node tools/config-site.js "打开闲鱼，搜索 iPhone"
-
-# 输出：
-# ✓ 在历史记录中找到 53 条成功记录
-# ✓ 自动提取配置
-# ✓ 配置已保存到: config/sites/闲鱼.json
+node config/init-browser.js
 ```
 
-### 之后使用（自动使用配置）
+### 3. 直接执行任务
 
 ```bash
-# 同样的命令，但现在自动使用配置
-node run-agent-task.js "打开闲鱼，搜索 iPhone 13 Pro"
-
-# 输出：
-# [config] 检测到已配置站点: 闲鱼
-# [config] 使用配置执行搜索（成本: $0.00）
-# [config] 搜索成功，耗时: 3200ms
+node launcher.js "在知乎搜索 AI Agent，整理前 5 条结果"
 ```
 
-## 成本对比
-
-### 未配置（第 1-3 次）
-
-```
-命令：node run-agent-task.js "打开闲鱼，搜索 iPhone"
-
-流程：
-1. 检测站点：闲鱼
-2. 检查配置：未找到
-3. 使用完全动态模式
-4. Phase 1: 任务分析（1 次 LLM）
-5. Phase 2: 执行操作（5-10 次 LLM + 截图）
-6. Phase 3: 验证结果（1 次 LLM）
-
-成本：$0.30/次（7-12 次 LLM + 5-10 次截图）
-速度：30 秒
-```
-
-### 已配置（第 4+ 次）
-
-```
-命令：node run-agent-task.js "打开闲鱼，搜索 iPhone16pro 的价格"
-
-流程：
-1. 检测站点：闲鱼
-2. 检查配置：找到 config/sites/闲鱼.json
-3. Phase 1: 任务分析（1 次 LLM，提取搜索词 "iPhone16pro"）
-4. 使用配置执行搜索（0 次 LLM，纯 DOM 操作）
-
-成本：$0.02/次（1 次 LLM + 0 次截图）
-速度：8 秒
-
-成本降低：93%（$0.30 → $0.02）
-```
-
-## 结果与调试
-
-当前 CLI 会直接输出任务 JSON 结果，不包含交互式反馈/纠正流程。
+## 常见环境变量
 
 ```bash
-$ node run-agent-task.js "打开知乎，搜 梦中的桃花源"
-...
-{"success":false,"exit_code":124,...}
+OWA_AGENT_BACKEND=auto
+OWA_AGENT_CODEX_MODEL=o4-mini
+OWA_AGENT_MAX_STEPS=30
+WEB_TASK_TIMEOUT_MS=180000
+WEB_CDP_URL=http://127.0.0.1:9222
+WEB_CDP_AUTO_LAUNCH=1
+OWA_AGENT_PROGRESS=1
+OWA_AGENT_DEBUG=0
 ```
 
-调试主要依赖：
+## 输出说明
 
-1. stderr 中的 `[agent]` 进度日志
-2. `meta.steps` 里的逐步执行历史
-3. `/tmp/owa_result_*.txt` 里的总结/采集结果（如果有）
+程序会：
 
-## 配置站点
+- 在 stdout 输出一行 JSON 结果
+- 在 stderr 输出执行进度日志（默认开启）
+- 在有采集内容时生成 `/tmp/owa_result_*.txt`
 
-```bash
-# 自动判断配置方式
-node tools/config-site.js "打开闲鱼，搜索 iPhone"
+## 调试建议
 
-# 如果有 ≥3 条成功记录 → 自动提取配置
-# 如果没有历史记录 → 打开浏览器，引导你点击（5 分钟）
-```
+- 看 `meta.steps` 了解实际动作序列
+- 开 `OWA_AGENT_DEBUG=1` 看更详细日志
+- 需要保留浏览器时设置 `WEB_KEEP_OPEN=1`
+- 遇到登录拦截时检查 `meta.requires_human`
 
-## 命令总结
+## 说明
 
-| 命令 | 用途 | 何时使用 |
-|------|------|----------|
-| `node run-agent-task.js "任务"` | 执行任务 | 任何时候（系统自动判断是否使用配置） |
-| `node tools/config-site.js "任务"` | 生成配置 | 执行 3-5 次后，一次性运行 |
+这份文档只保留日常使用方式。
 
-## 优势
+实现说明看：
 
-1. **零学习成本**：只需要记住一个命令 `run-agent-task.js`
-2. **自动优化**：系统自动判断是否使用配置
-3. **渐进式**：
-   - 第 1-3 次：完全动态（成本高，但积累数据）
-   - 第 4 次：运行 `config-site.js` 生成配置
-   - 第 5+ 次：自动使用配置（成本降低 100%）
-
-## 示例
-
-```bash
-# 第 1 次：完全动态模式
-$ node run-agent-task.js "打开闲鱼，搜索 iPhone"
-[config] 站点 "闲鱼" 未配置
-[config] 使用完全动态模式（成本: ~$0.30）
-✓ 任务完成
-
-# 第 2-3 次：继续积累数据
-$ node run-agent-task.js "打开闲鱼，搜索 Mac mini"
-$ node run-agent-task.js "打开闲鱼，搜索 iPad"
-
-# 生成配置
-$ node tools/config-site.js "打开闲鱼，搜索 iPhone"
-✓ 在历史记录中找到 53 条成功记录
-✓ 配置已保存
-
-# 第 4+ 次：自动使用配置
-$ node run-agent-task.js "打开闲鱼，搜索 iPhone"
-[config] 检测到已配置站点: 闲鱼
-[config] 使用配置执行搜索（成本: $0.00）
-✓ 搜索成功，耗时: 3200ms
-```
-
-## 技术细节
-
-### 自动判断逻辑
-
-```javascript
-// run-agent-task.js 的逻辑
-const siteName = extractSiteName(task);  // 从任务中提取站点名
-const config = loadSiteConfig(siteName); // 检查是否有配置
-
-if (config && isSearchTask(task)) {
-  // 使用配置执行（快速路径）
-  executeSearch(page, config, query);
-} else {
-  // 完全动态模式（回退路径）
-  runAgentTask(task);
-}
-```
-
-### 配置文件位置
-
-```
-config/sites/
-├── 闲鱼.json
-├── 知乎.json
-└── 小红书.json
-```
-
-### 配置文件格式
-
-```json
-{
-  "name": "闲鱼",
-  "url": "https://www.goofish.com",
-  "search": {
-    "steps": [
-      { "action": "wait", "ms": 1200 },
-      { "action": "type", "selector": "...", "clear": true },
-      { "action": "press", "key": "Enter" },
-      { "action": "wait", "ms": 1200 },
-      { "action": "wait_for_navigation" }
-    ]
-  },
-  "stats": {
-    "extractedFrom": 53,
-    "confidence": 0.21
-  }
-}
-```
+- `README.md`
+- `ARCHITECTURE.md`
+- `CLAUDE.md`

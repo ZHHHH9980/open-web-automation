@@ -38,7 +38,28 @@ function shouldDeferInitialNavigation(executionPlan, initialUrl) {
   if (!initialUrl || !first || !second) return false;
   if (first.action !== "listen") return false;
   if (second.action !== "goto" || !second.url) return false;
-  return isSemanticallySameUrl(initialUrl, second.url);
+
+  if (isSemanticallySameUrl(initialUrl, second.url)) {
+    return true;
+  }
+
+  try {
+    const initial = new URL(initialUrl);
+    const target = new URL(second.url);
+
+    if (initial.origin !== target.origin) return false;
+    if (initial.pathname.replace(/\/$/, "") !== target.pathname.replace(/\/$/, "")) return false;
+
+    for (const [key, value] of initial.searchParams.entries()) {
+      if (target.searchParams.get(key) !== value) {
+        return false;
+      }
+    }
+
+    return true;
+  } catch (_err) {
+    return false;
+  }
 }
 
 async function runAgentTask(rawTask, opts = {}) {
@@ -111,4 +132,8 @@ async function runAgentTask(rawTask, opts = {}) {
 
 module.exports = {
   runAgentTask,
+  __internal: {
+    isSemanticallySameUrl,
+    shouldDeferInitialNavigation,
+  },
 };
