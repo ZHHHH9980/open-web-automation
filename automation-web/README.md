@@ -28,6 +28,7 @@ launcher.js
 
 - `ARCHITECTURE.md`
 - `CLAUDE.md`
+- `docs/openclaw-integration.md`
 
 ## 安装
 
@@ -114,6 +115,20 @@ CLI 会输出一行 JSON，核心字段如下：
 ```
 
 如果有采集结果，程序还会额外把总结和便于阅读的结构化结果写到 `outputs/YYYY-MM-DD_HH-mm-ss_platform.md`。
+
+## OpenClaw 接入
+
+如果你希望把本仓库接到 OpenClaw Node 中使用，推荐直接由 Node 在本机调用 `launcher.js`，再消费返回的 JSON 结果。
+
+接入时通常会用到这些能力：
+
+- 用自然语言 prompt 触发任务执行
+- 从 `stdout` 读取统一 JSON
+- 在 `meta.requires_human = true` 时处理人工登录
+- 读取 `meta.screenshot_path` 或 `screenshot` 返回登录截图
+- 在有采集结果时读取 `outputs/*.md` 作为完整结果文件
+
+完整说明见 `docs/openclaw-integration.md`。如果你想直接走适配层入口，可以使用 `adapters/openclaw/index.js` 或 `npm run run:openclaw`。
 
 ## 常用环境变量
 

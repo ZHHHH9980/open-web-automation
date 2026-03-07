@@ -69,20 +69,20 @@ async function runAgentTask(rawTask, opts = {}) {
   }
 
   const cdpUrl = opts.cdpUrl || process.env.WEB_CDP_URL || "http://127.0.0.1:9222";
-  const maxSteps = Math.max(1, toInt(process.env.OWA_AGENT_MAX_STEPS, 30));
-  const model = process.env.OWA_AGENT_CODEX_MODEL || "";
-  const keepOpenOnHuman = process.env.WEB_KEEP_OPEN_ON_HUMAN !== "0";
-  const keepOpen = opts.debugMode || process.env.WEB_KEEP_OPEN === "1";
-  const debug = process.env.OWA_AGENT_DEBUG === "1";
-  const progress = process.env.OWA_AGENT_PROGRESS !== "0";
-  const timeoutMs = Math.max(1000, toInt(process.env.WEB_TASK_TIMEOUT_MS, 180000));
+  const maxSteps = Math.max(1, toInt(opts.maxSteps, toInt(process.env.OWA_AGENT_MAX_STEPS, 30)));
+  const model = opts.model || process.env.OWA_AGENT_CODEX_MODEL || "";
+  const keepOpenOnHuman = opts.keepOpenOnHuman != null ? Boolean(opts.keepOpenOnHuman) : process.env.WEB_KEEP_OPEN_ON_HUMAN !== "0";
+  const keepOpen = opts.keepOpen != null ? Boolean(opts.keepOpen) : (opts.debugMode || process.env.WEB_KEEP_OPEN === "1");
+  const debug = opts.debug != null ? Boolean(opts.debug) : process.env.OWA_AGENT_DEBUG === "1";
+  const progress = opts.progress != null ? Boolean(opts.progress) : process.env.OWA_AGENT_PROGRESS !== "0";
+  const timeoutMs = Math.max(1000, toInt(opts.timeoutMs, toInt(process.env.WEB_TASK_TIMEOUT_MS, 180000)));
   const startedAt = Date.now();
 
   let browser;
   let page;
   let requiresHuman = false;
 
-  const taskId = generateTaskId();
+  const taskId = normalizeText(opts.taskId) || generateTaskId();
   const extractionFile = getExtractionFilePath(taskId);
   const executionContext = {
     startApiCollection,

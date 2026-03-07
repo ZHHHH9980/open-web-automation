@@ -3,10 +3,16 @@
 const { collectPageState } = require("./state-collector");
 const { executeDecision } = require("./executor");
 const { canExecutePlan, explainCannotExecutePlan } = require("../plan/task-planner");
-const { finalizeCompletedTask, buildTimeoutResult, buildPlanExhaustedResult, buildActionNotExecutableResult, buildHumanPauseResult, buildMaxStepsResult } = require("../finish/finalize-task");
-const { normalizeText, logProgress } = require("../../shared/utils");
-const { makeScreenshot } = require("../init/browser");
-const { data: dataHandler, listen: listenHandler } = require("./actions");
+const { logProgress, normalizeText } = require("../../shared/utils");
+const { handlePostActionEffects, appendHistory, appendErrorHistory } = require("./run-loop-effects");
+const {
+  buildTimeoutExit,
+  buildPlanExhaustedExit,
+  buildActionNotExecutableExit,
+  buildHumanBlockExit,
+  buildCompletedExit,
+  buildMaxStepsExit,
+} = require("./run-loop-termination");
 
 async function runExecutionLoop(params) {
   const {
@@ -31,10 +37,7 @@ async function runExecutionLoop(params) {
 
   for (let step = 1; step <= maxSteps; step += 1) {
     if (Date.now() - startedAt > timeoutMs) {
-      return {
-        result: buildTimeoutResult({ task, history, timeoutMs, lastUrl }),
-        requiresHuman,
-      };
+      return buildTimeoutExit({ task, history, timeoutMs, lastUrl, requiresHuman });
     }
 
     const state = await collectPageState(page, step, 0, executionContext.currentApiCollector);
@@ -42,49 +45,20 @@ async function runExecutionLoop(params) {
 
     if (state.human_block) {
       requiresHuman = true;
-      logProgress(progress, `human intervention required: ${state.human_block.reason}`);
-
-      let screenshotPath = "";
-      let screenshotBase64 = "";
-      try {
-        const screenshot = await makeScreenshot(page, "human-block");
-        screenshotPath = screenshot.filePath || "";
-        screenshotBase64 = screenshot.base64 || "";
-      } catch (err) {
-        logProgress(progress, `human-block screenshot failed: ${normalizeText(err.message || err)}`);
-      }
-
-      return {
-        result: buildHumanPauseResult({
-          task,
-          step,
-          url: state.url,
-          reason: state.human_block.reason,
-          block: state.human_block,
-          screenshot: screenshotBase64,
-          screenshotPath,
-        }),
-        requiresHuman,
-      };
+      return buildHumanBlockExit({ page, task, step, state, progress, requiresHuman });
     }
 
     logProgress(progress, `step ${step}/${maxSteps} url=${state.url || "about:blank"} planning...`);
 
     if (!executionPlan || executionPlan.length === 0) {
-      return {
-        result: buildPlanExhaustedResult({ task, step, url: state.url }),
-        requiresHuman,
-      };
+      return buildPlanExhaustedExit({ task, step, url: state.url, requiresHuman });
     }
 
     const plannedAction = executionPlan.shift();
     if (!canExecutePlan(plannedAction, state, executionContext)) {
       const reason = explainCannotExecutePlan(plannedAction, state, executionContext);
       logProgress(progress, `planned action not executable: ${plannedAction.action}${reason ? ` | ${reason}` : ""}`);
-      return {
-        result: buildActionNotExecutableResult({ task, step, url: state.url, plannedAction, reason }),
-        requiresHuman,
-      };
+      return buildActionNotExecutableExit({ task, step, url: state.url, plannedAction, reason, requiresHuman });
     }
 
     const decision = plannedAction;
@@ -107,19 +81,18 @@ async function runExecutionLoop(params) {
     try {
       const execRet = await executeDecision(page, decision, state, executionContext);
 
-      if (decision.action === "listen" && execRet.apiCollector) {
-        listenHandler.handleApiListener(executionContext, execRet.apiCollector, progress);
-      }
+      const effectResult = handlePostActionEffects({
+        decision,
+        execRet,
+        executionContext,
+        progress,
+        extractionFile,
+        extractedCount,
+        debug,
+      });
+      extractedCount = effectResult.extractedCount;
 
-      if (["scrape_list", "scrape_detail"].includes(decision.action) && execRet.data) {
-        extractedCount += 1;
-        dataHandler.storeCapturedData(extractionFile, extractedCount, decision.action, execRet.data, debug);
-        if (decision.action === "scrape_list") {
-          executionContext.lastListCapture = execRet.data;
-        }
-      }
-
-      history.push({
+      appendHistory(history, {
         step,
         action: decision.action,
         reason: decision.reason,
@@ -132,26 +105,24 @@ async function runExecutionLoop(params) {
           requiresHuman = true;
         }
 
-        return {
-          result: await finalizeCompletedTask({
-            page,
-            task,
-            execRet,
-            history,
-            extractedCount,
-            extractionFile,
-            model,
-            opts,
-            progress,
-          }),
+        return buildCompletedExit({
+          page,
+          task,
+          execRet,
+          history,
+          extractedCount,
+          extractionFile,
+          model,
+          opts,
+          progress,
           requiresHuman,
-        };
+        });
       }
 
       await page.waitForTimeout(300);
     } catch (err) {
       const detail = normalizeText(err.message || err);
-      history.push({
+      appendErrorHistory(history, {
         step,
         action: decision.action,
         reason: decision.reason,
@@ -161,10 +132,7 @@ async function runExecutionLoop(params) {
     }
   }
 
-  return {
-    result: buildMaxStepsResult({ task, history, maxSteps, lastUrl }),
-    requiresHuman,
-  };
+  return buildMaxStepsExit({ task, history, maxSteps, lastUrl, requiresHuman });
 }
 
 module.exports = {

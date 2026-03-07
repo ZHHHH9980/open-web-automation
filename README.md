@@ -1,168 +1,99 @@
 # Open Web Automation
 
-AI Agent 驱动的智能网页自动化工具 - 用自然语言控制浏览器，自动搜索、抓取、总结网页内容。
+一个用于**执行自然语言网页任务**的本地浏览器自动化仓库。
 
-## 核心流程
+它适合这样的场景：你给一句任务，例如“去知乎搜索 AI Agent，整理前 5 条结果”，程序会连接本地浏览器，执行搜索、浏览、抓取和整理，并返回统一 JSON 结果；如果过程中遇到登录拦截，也会返回截图和人工介入信号。
 
-```
-人类指令 → Agent 分析 → 执行搜索 → 抓取内容 → Agent 总结
-```
+## 这个仓库是做什么的
 
-**示例**：
-```bash
-# 输入指令
-node automation-web/run-agent-task.js "去小红书搜索 AI Agent，返回前 3 篇文章"
+你可以把它理解成一个“网页任务执行器”：
 
-# Agent 自动完成
-1. 分析任务：识别目标站点（小红书）、提取关键词（AI Agent）
-2. 执行搜索：打开小红书 → 搜索 "AI Agent" → 定位文章列表
-3. 抓取内容：点击文章 → 提取标题和正文 → 返回列表（重复 3 次）
-4. 生成总结：汇总文章信息，输出结构化结果
-```
+- 接收自然语言任务
+- 连接本地 Chrome / CDP
+- 执行搜索、浏览、抓取、整理
+- 输出统一 JSON 结果
+- 在有采集内容时生成 `outputs/*.md`
+- 在需要人工介入时返回截图
 
-## 核心能力
+它本身更像一个本地 worker，适合被命令行、Node 服务、OpenClaw Node 或其他上层系统调用。
 
-- **自然语言驱动**：用一句话描述任务，Agent 自动分析和执行
-- **智能搜索**：自动识别目标站点，构建搜索策略
-- **内容抓取**：支持文章、评论、商品等多种内容类型
-- **智能总结**：Agent 自动提炼关键信息，生成结构化输出
-- **真实账号场景**：支持登录态、验证码、人机验证
+## 最常见的用法
 
-## 快速开始
-
-### 1. 启动浏览器
+### 1. 安装依赖
 
 ```bash
-# 可选：手动启动 Chrome（未启动时任务会自动拉起）
+cd automation-web
+npm install
+```
+
+### 2. 初始化浏览器配置
+
+```bash
+node config/init-browser.js
+```
+
+### 3. 执行任务
+
+```bash
+node launcher.js "去小红书搜索 openclaw，返回前 3 篇文章的标题和内容"
+node launcher.js "在知乎搜索 AI Agent，整理前 5 条结果"
+```
+
+如果本地 CDP 没有启动，程序默认会尝试自动拉起 Chrome；也可以手动运行：
+
+```bash
 ./start-chrome.sh
 ```
-首次配置好 `automation-web/config/browser.json` 后，日常直接跑任务即可；只有你想复用已有登录窗口时才需要手动先启动。
 
+## 执行后会得到什么
 
-### 2. 执行任务
+程序会输出三类结果：
 
-```bash
-# 搜索任务
-node automation-web/run-agent-task.js "去小红书搜索 openclaw，返回前 3 篇文章"
+- `stdout`：一行 JSON，适合程序解析
+- `stderr`：执行日志，适合排查问题
+- `automation-web/outputs/*.md`：可直接阅读或回传的结果文件
 
-# 知乎搜索
-node automation-web/run-agent-task.js "在知乎搜索 AI Agent，找到最热门的 5 个回答"
+常见结果包括：
 
-# B站搜索
-node automation-web/run-agent-task.js "去B站搜索编程教程，返回播放量最高的 3 个视频"
-```
+- 正常完成：返回摘要、步骤、采集结果等
+- 需要登录：返回 `meta.requires_human = true` 和截图
+- 执行失败：返回失败原因和退出码
 
-## 工作原理
+## 适合接到哪里
 
-### 1. 指令分析
+这个仓库适合接到：
 
-Agent 接收自然语言指令，自动分析：
-- **目标站点**：识别小红书、知乎、B站等常用站点
-- **搜索关键词**：提取核心搜索词
-- **任务目标**：理解需要抓取的内容类型和数量
+- 本地命令行工具
+- Node.js 服务
+- 聊天机器人后端
+- OpenClaw Node
 
-### 2. 执行搜索
+如果你要把它接到 OpenClaw，接入说明见：
 
-Agent 自动执行搜索操作：
-- 打开目标站点
-- 输入搜索关键词
-- 定位搜索结果列表
-- 识别目标内容（文章、视频、商品等）
+- `automation-web/docs/openclaw-integration.md:1`
 
-### 3. 抓取内容
+## 仓库里主要看哪里
 
-Agent 智能抓取页面内容：
-- **视觉识别**：基于截图识别页面元素
-- **DOM 操作**：使用选择器精确定位
-- **平台适配**：自动适配不同网站的交互模式
-  - Modal 模式（小红书）：点击打开弹窗 → 提取内容 → 关闭弹窗
-  - Page 模式（知乎）：点击跳转页面 → 提取内容 → 返回列表
+- `automation-web/README.md:1`：执行器说明
+- `automation-web/USAGE.md:1`：最常用命令
+- `automation-web/docs/openclaw-integration.md:1`：OpenClaw 接入清单
+- `automation-web/ARCHITECTURE.md:1`：更细的实现结构
 
-### 4. 生成总结
+## 当前能力概览
 
-Agent 自动总结抓取的内容：
-- 提炼关键信息
-- 生成结构化输出
-- 包含标题、链接、摘要等
+当前已内置一些常见站点配置，包括：
 
-## 输出格式
+- 小红书
+- 知乎
+- B站
+- 闲鱼
+- 淘宝
+- 京东
+- 微博
+- 抖音
 
-```json
-{
-  "success": true,
-  "message": "任务完成",
-  "exit_code": 0,
-  "meta": {
-    "task": "去小红书搜索 AI Agent，返回前 3 篇文章",
-    "url": "https://www.xiaohongshu.com/search?q=AI+Agent",
-    "steps": [
-      {"step": 1, "action": "goto", "url": "https://www.xiaohongshu.com"},
-      {"step": 2, "action": "type", "text": "AI Agent"},
-      {"step": 3, "action": "click", "target": "第一篇文章"},
-      {"step": 4, "action": "extract", "label": "文章内容"}
-    ],
-    "extracted_count": 3,
-    "conclusion": {
-      "summary": "找到 3 篇关于 AI Agent 的文章...",
-      "links": [
-        "https://www.xiaohongshu.com/article/1",
-        "https://www.xiaohongshu.com/article/2",
-        "https://www.xiaohongshu.com/article/3"
-      ]
-    }
-  }
-}
-```
+其中当前能力相对更完整的是小红书和知乎。
 
-## 支持的站点
+## 一句话总结
 
-系统内置常用站点配置，开箱即用：
-
-- 小红书 (xiaohongshu.com)
-- 知乎 (zhihu.com)
-- B站 (bilibili.com)
-- 闲鱼 (goofish.com)
-- 淘宝 (taobao.com)
-- 京东 (jd.com)
-- 微博 (weibo.com)
-- 抖音 (douyin.com)
-
-未配置的站点会自动通过 Google 搜索定位。
-
-## 环境变量
-
-```bash
-# Agent 配置
-OWA_AGENT_MAX_STEPS=15          # 最大执行步数（默认 15）
-OWA_AGENT_MODEL=claude-sonnet-4-6  # 使用的 LLM 模型
-ANTHROPIC_API_KEY=sk-ant-...    # Claude API 密钥
-
-# 浏览器配置
-WEB_CDP_AUTO_LAUNCH=0            # 关闭“连不上就自动拉起 Chrome”
-WEB_CDP_URL=http://127.0.0.1:9222  # Chrome CDP 地址
-WEB_KEEP_OPEN=1                 # 任务完成后保持浏览器打开
-WEB_TASK_TIMEOUT_MS=180000      # 任务超时时间（3分钟）
-```
-
-## 适用场景
-
-✅ **适合**：
-- 需要搜索和抓取网页内容
-- 需要 Agent 自动分析和总结信息
-- 需要登录态的真实账号操作
-- 复杂的多步骤网页任务
-- 动态页面、SPA 应用
-
-❌ **不适合**：
-- 简单的 API 调用
-- 需要毫秒级响应的场景
-- 大规模批量爬取（成本较高）
-
-## 技术架构
-
-- **LLM Agent**：Claude Sonnet 4.6 驱动的智能决策
-- **浏览器控制**：Playwright + Chrome CDP
-- **视觉识别**：基于截图的元素定位
-- **平台适配**：自动识别网站交互模式
-
-详细架构说明见 [automation-web/ARCHITECTURE.md](automation-web/ARCHITECTURE.md)
+如果你需要一个**能在本地浏览器里执行网页任务、返回结构化结果、并支持人工接管登录**的执行器，这个仓库就是干这个的。

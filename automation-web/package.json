@@ -12,6 +12,7 @@
   },
   "scripts": {
     "run": "node launcher.js",
+    "run:openclaw": "node adapters/openclaw/cli.js",
     "debug:collect-state": "node debug/collect-state.js",
     "debug:scrape": "node debug/scrape.js",
     "test:orchestrator": "node tests/orchestrator.navigation.test.js",
@@ -19,6 +20,7 @@
     "test:zhihu-api": "node tests/zhihu.api-resolution.test.js",
     "test:zhihu-user": "node tests/zhihu.current-user.test.js",
     "test:output": "node tests/output-rendering.test.js",
+    "test:openclaw": "node tests/openclaw.adapter.test.js",
     "e2e": "node harness/run-e2e.js"
   },
   "dependencies": {
