@@ -122,16 +122,20 @@ function determineInitialUrl(taskAnalysis, progress) {
  * @param {boolean} progress - Enable progress logging
  * @returns {Promise<{browser: Object, page: Object}>}
  */
-async function initializeBrowser(cdpUrl, initialUrl, progress) {
+async function initializeBrowser(cdpUrl, initialUrl, progress, opts = {}) {
   logProgress(progress, "opening browser...");
   const conn = await connectBrowser(cdpUrl);
   const browser = conn.browser;
   const page = await getAutomationPage(conn.context);
   page.setDefaultTimeout(12000);
 
-  logProgress(progress, `navigating to ${initialUrl}...`);
-  await page.goto(initialUrl, { waitUntil: "domcontentloaded", timeout: 90000 });
-  await page.waitForTimeout(1000);
+  if (!opts.skipInitialNavigation && initialUrl) {
+    logProgress(progress, `navigating to ${initialUrl}...`);
+    await page.goto(initialUrl, { waitUntil: "domcontentloaded", timeout: 90000 });
+    await page.waitForTimeout(1000);
+  } else {
+    logProgress(progress, "initial navigation deferred to execution plan");
+  }
 
   return { browser, page };
 }

@@ -12,6 +12,35 @@ const {
 const { generateTaskId, getExtractionFilePath, normalizeText, toInt } = require("../shared/utils");
 const { startApiCollection } = require("./act/state-collector");
 
+function isSemanticallySameUrl(currentUrl, targetUrl) {
+  try {
+    const current = new URL(currentUrl);
+    const target = new URL(targetUrl);
+
+    if (current.origin !== target.origin) return false;
+    if (current.pathname.replace(/\/$/, "") !== target.pathname.replace(/\/$/, "")) return false;
+
+    for (const [key, value] of target.searchParams.entries()) {
+      if (current.searchParams.get(key) !== value) {
+        return false;
+      }
+    }
+
+    return true;
+  } catch (_err) {
+    return false;
+  }
+}
+
+function shouldDeferInitialNavigation(executionPlan, initialUrl) {
+  const first = executionPlan?.[0];
+  const second = executionPlan?.[1];
+  if (!initialUrl || !first || !second) return false;
+  if (first.action !== "listen") return false;
+  if (second.action !== "goto" || !second.url) return false;
+  return isSemanticallySameUrl(initialUrl, second.url);
+}
+
 async function runAgentTask(rawTask, opts = {}) {
   const task = normalizeText(rawTask);
   if (!task) {
@@ -51,7 +80,9 @@ async function runAgentTask(rawTask, opts = {}) {
       return buildInitialUrlFailureResult(task, initialUrlResult.error);
     }
 
-    const browserInit = await initializeBrowser(cdpUrl, initialUrlResult.url, progress);
+    const browserInit = await initializeBrowser(cdpUrl, initialUrlResult.url, progress, {
+      skipInitialNavigation: shouldDeferInitialNavigation(executionPlan, initialUrlResult.url),
+    });
     browser = browserInit.browser;
     page = browserInit.page;
 
