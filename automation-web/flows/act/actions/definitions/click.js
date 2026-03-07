@@ -1,44 +1,29 @@
 "use strict";
 
-const { resolveSelector, hasCandidateTarget } = require("./helpers");
 const { canHandleClick, executePlatformClick } = require("../../platform-adapter");
 
 module.exports = {
   name: "click",
   category: "Interaction",
-  summary: "Click by coordinates, selector, or target_id.",
+  summary: "Open a result item through platform-specific click handling.",
   parameters: [
-    "Use one of: x+y, selector, or target_id.",
+    "target_id (required): 1-based result rank for sites that require click_result_item.",
   ],
   examples: [
-    { action: "click", target_id: 1, reason: "Open the first visible result" },
-    { action: "click", x: 420, y: 180, reason: "Click the visible CTA" },
+    { action: "click", target_id: 1, reason: "Open the first visible result on a platform that requires click_result_item" },
   ],
   rules: [
-    "Prefer target_id when a candidate exists in state.",
+    "Only use on sites with explicit platform click support.",
   ],
   canExecute(action, state) {
-    if (action.x != null && action.y != null) return true;
-    if (action.selector) return true;
-    if (canHandleClick(action, state)) return true;
-    return hasCandidateTarget(action, state);
+    return canHandleClick(action, state);
   },
   async execute(page, action, state, context = {}) {
     context.lastNavigationTriggerAt = Date.now();
 
-    if (action.x != null && action.y != null) {
-      await page.mouse.click(action.x, action.y);
-      return { done: false, note: `click at (${action.x}, ${action.y})` };
-    }
+    const platformResult = await executePlatformClick(page, action, state, context);
+    if (platformResult) return platformResult;
 
-    if (!action.selector) {
-      const platformResult = await executePlatformClick(page, action, state, context);
-      if (platformResult) return platformResult;
-    }
-
-    const selector = resolveSelector(action, state);
-    if (!selector) throw new Error("click requires selector, valid target_id, or coordinates (x, y)");
-    await page.locator(selector).first().click({ timeout: 10000 });
-    return { done: false, note: `click ${selector}` };
+    throw new Error("click requires platform-specific support for the current site");
   },
 };

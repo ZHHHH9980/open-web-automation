@@ -93,7 +93,7 @@ function buildPlanningPrompt(task, state, maxSteps, commonSites = {}) {
   } else {
     promptLines.push(
       "Note: Browser not yet opened. Generate plan based on task description only.",
-      "Prefer API-first actions, but you may use click with target_id when the site planning reference says detail_open_mode=click_result_item.",
+      "Prefer API-first actions. Only use click with target_id on sites whose planning reference explicitly says detail_open_mode=click_result_item.",
       ""
     );
   }
@@ -111,7 +111,7 @@ function buildPlanningPrompt(task, state, maxSteps, commonSites = {}) {
     '    {"step": 1, "action": "listen", "reason": "Start API monitoring before navigation"},',
     '    {"step": 2, "action": "goto", "url": "https://...", "reason": "Navigate to the target page"},',
     '    {"step": 3, "action": "scrape_list", "max_items": 3, "reason": "Extract the first 3 items from the configured list API"},',
-    '    {"step": 4, "action": "click", "target_id": 1, "reason": "Open the first result when the site requires click_result_item for detail pages"},',
+    '    {"step": 4, "action": "click", "target_id": 1, "reason": "Open the first result on a site that requires click_result_item for detail pages"},',
     '    {"step": 5, "action": "scrape_detail", "reason": "Capture detail data from the configured detail API if it was triggered"},',
     '    {"step": 6, "action": "done", "result": "...", "reason": "Task complete"}',
     "  ]",
@@ -123,8 +123,8 @@ function buildPlanningPrompt(task, state, maxSteps, commonSites = {}) {
     "- Each plan step must have: step, action, reason",
     "- Include all necessary parameters for each action",
     "- Only use the actions listed above; do not invent new action names",
-    "- Do not use selector, x, or y in plans unless the current page state explicitly requires them",
-    "- You may use click with target_id when detail_open_mode=click_result_item; target_id means the 1-based result rank to open",
+    "- Do not use selector, x, or y in plans",
+    "- Only use click with target_id when detail_open_mode=click_result_item; target_id means the 1-based result rank to open",
     "- If flow=list_only and content_from_list=yes, prefer listen -> goto -> scrape_list -> done for title/content retrieval tasks",
     "- If flow=list_then_detail and content_from_list=no, use scrape_list for discovery, then open detail pages and use scrape_detail for content retrieval tasks",
     "- If detail_open_mode=click_result_item, prefer click target_id=1/2/3 after scrape_list and do not use goto with {{item_n_url}} placeholders for that site",
