@@ -8,7 +8,6 @@ module.exports = {
   browser: require("../flows/init/browser"),
   stateCollector: require("../flows/act/state-collector"),
   executor: require("../flows/act/executor"),
-  loopDetector: require("./loop-detector"),
   taskPlanner: require("../flows/plan/task-planner"),
   conclusionGenerator: require("../flows/finish/conclusion-generator"),
   result: require("../flows/finish/result"),
