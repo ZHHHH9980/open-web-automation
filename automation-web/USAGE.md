@@ -45,6 +45,7 @@ node launcher.js "在知乎搜索 AI Agent，整理前 5 条结果"
 
 ```bash
 OWA_AGENT_BACKEND=auto
+OWA_AGENT_MODEL=gpt-5.4
 OWA_AGENT_CODEX_MODEL=o4-mini
 OWA_AGENT_MAX_STEPS=30
 WEB_TASK_TIMEOUT_MS=180000

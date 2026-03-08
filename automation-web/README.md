@@ -28,6 +28,8 @@ launcher.js
 
 - `ARCHITECTURE.md`
 - `CLAUDE.md`
+- `docs/EXECUTION_CONTRACT.md`
+- `docs/RUNBOOK.md`
 - `docs/openclaw-integration.md`
 
 ## 安装
@@ -116,6 +118,12 @@ CLI 会输出一行 JSON，核心字段如下：
 
 如果有采集结果，程序还会额外把总结和便于阅读的结构化结果写到 `outputs/YYYY-MM-DD_HH-mm-ss_platform.md`。
 
+如果你要把这个仓库作为一个可交接的“执行器”来使用，建议按下面顺序阅读：
+
+- `docs/EXECUTION_CONTRACT.md`：Role / Boundary / Interface 的唯一真相
+- `docs/RUNBOOK.md`：启动、验证、联调、排障步骤
+- `docs/openclaw-integration.md`：OpenClaw / Node 接入清单
+
 ## OpenClaw 接入
 
 如果你希望把本仓库接到 OpenClaw Node 中使用，推荐直接由 Node 在本机调用 `launcher.js`，再消费返回的 JSON 结果。
@@ -135,6 +143,9 @@ CLI 会输出一行 JSON，核心字段如下：
 ```bash
 # planner 后端: auto | claude | openai | api | codex
 OWA_AGENT_BACKEND=auto
+
+# OpenAI planner 模型（默认 `gpt-5.4`）
+OWA_AGENT_MODEL=gpt-5.4
 
 # Codex planner 模型
 OWA_AGENT_CODEX_MODEL=o4-mini

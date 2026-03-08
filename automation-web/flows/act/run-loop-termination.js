@@ -62,6 +62,7 @@ async function buildHumanBlockExit({ page, task, step, state, progress, requires
 async function buildCompletedExit({
   page,
   task,
+  taskAnalysis,
   execRet,
   history,
   extractedCount,
@@ -75,6 +76,7 @@ async function buildCompletedExit({
     result: await finalizeCompletedTask({
       page,
       task,
+      taskAnalysis,
       execRet,
       history,
       extractedCount,

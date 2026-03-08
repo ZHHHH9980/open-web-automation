@@ -18,6 +18,7 @@ async function runExecutionLoop(params) {
   const {
     page,
     task,
+    taskAnalysis,
     opts = {},
     model,
     progress,
@@ -108,6 +109,7 @@ async function runExecutionLoop(params) {
         return buildCompletedExit({
           page,
           task,
+          taskAnalysis,
           execRet,
           history,
           extractedCount,

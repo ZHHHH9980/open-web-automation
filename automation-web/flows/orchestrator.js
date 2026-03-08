@@ -110,6 +110,7 @@ async function runAgentTask(rawTask, opts = {}) {
     const loopRet = await runExecutionLoop({
       page,
       task,
+      taskAnalysis,
       opts,
       model,
       progress,

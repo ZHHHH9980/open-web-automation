@@ -102,8 +102,13 @@ function renderListItem(item, itemIndex) {
   const articleContent = formatRichText(item.article_content || "");
   const detailUrl = normalizeInlineText(item.detail_url || "");
   const likes = Number(item.likes) || 0;
+  const publishTime = formatTimestamp(item.publish_time);
 
   const lines = [`## ${itemIndex}. ${title}`, "", `- 作者：${author}`];
+
+  if (publishTime) {
+    lines.push(`- 时间：${publishTime}`);
+  }
 
   if (likes > 0) {
     lines.push(`- 点赞：${likes}`);

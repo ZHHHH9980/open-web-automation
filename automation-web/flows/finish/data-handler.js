@@ -43,7 +43,6 @@ function storeCapturedData(dataFile, capturedCount, action, data, debug) {
   }
 }
 
-
 function loadCapturedEntries(dataFile) {
   const raw = fs.readFileSync(dataFile, "utf-8");
   const parts = raw.split(/--- Capture #\d+ \(([^)]+)\) ---\n/g);
@@ -68,7 +67,7 @@ function loadCapturedEntries(dataFile) {
   return entries;
 }
 
-async function generateFinalConclusion(dataFile, capturedCount, task, model, opts, progress) {
+async function generateFinalConclusion(dataFile, capturedCount, task, taskAnalysis, model, opts, progress) {
   if (capturedCount === 0 || !fs.existsSync(dataFile)) {
     return null;
   }
@@ -76,7 +75,7 @@ async function generateFinalConclusion(dataFile, capturedCount, task, model, opt
   logProgress(progress, "generating conclusion from captured data");
   try {
     const extractedData = loadCapturedEntries(dataFile);
-    return await generateConclusion(extractedData, task, model, { debugMode: opts.debugMode });
+    return await generateConclusion(extractedData, task, model, { taskAnalysis, debugMode: opts.debugMode });
   } catch (err) {
     logProgress(progress, `conclusion generation failed: ${err.message}`);
     return null;

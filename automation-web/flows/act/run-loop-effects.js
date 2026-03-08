@@ -38,11 +38,13 @@ function handlePostActionEffects({
   }
 
   if (["scrape_list", "scrape_detail"].includes(decision.action) && execRet.data) {
-    nextExtractedCount += 1;
-    dataHandler.storeCapturedData(extractionFile, nextExtractedCount, decision.action, execRet.data, debug);
-
     if (decision.action === "scrape_list") {
       executionContext.lastListCapture = execRet.data;
+    }
+
+    if (decision.capture !== false) {
+      nextExtractedCount += 1;
+      dataHandler.storeCapturedData(extractionFile, nextExtractedCount, decision.action, execRet.data, debug);
     }
   }
 

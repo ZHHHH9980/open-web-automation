@@ -5,12 +5,13 @@ const { toResult } = require("./result");
 const { normalizeText } = require("../../shared/utils");
 const { data: dataHandler } = require("../act/actions");
 
-async function finalizeCompletedTask({ page, task, execRet, history, extractedCount, extractionFile, model, opts, progress }) {
+async function finalizeCompletedTask({ page, task, taskAnalysis, execRet, history, extractedCount, extractionFile, model, opts, progress }) {
   const finalUrl = page.url();
   const conclusion = await dataHandler.generateFinalConclusion(
     extractionFile,
     extractedCount,
     task,
+    taskAnalysis,
     model,
     opts,
     progress,
@@ -26,6 +27,7 @@ async function finalizeCompletedTask({ page, task, execRet, history, extractedCo
     meta: {
       requires_human: execRet.requiresHuman || false,
       task,
+      task_analysis: taskAnalysis || null,
       steps: history,
       data: execRet.data || {},
       extracted_count: extractedCount,
@@ -79,39 +81,27 @@ function buildPlanExhaustedResult({ task, step, url }) {
 }
 
 function buildActionNotExecutableResult({ task, step, url, plannedAction, reason }) {
-  const detail = String(reason || "").trim();
   return toResult({
     success: false,
     exit_code: 4,
-    message: detail
-      ? `planned action not executable: ${plannedAction.action} (${detail})`
-      : `planned action not executable: ${plannedAction.action}`,
-    meta: {
-      requires_human: false,
-      task,
-      step,
-      url,
-      planned_action: plannedAction,
-      not_executable_reason: detail || undefined,
-    },
+    message: `planned action not executable: ${plannedAction?.action || "unknown"}`,
+    meta: { requires_human: false, task, step, url, planned_action: plannedAction, reason },
   });
 }
 
 function buildHumanPauseResult({ task, step, url, reason, block, screenshot, screenshotPath }) {
-  const detail = String(reason || block?.reason || "paused for human intervention").trim();
   return toResult({
     success: false,
     exit_code: 2,
-    message: detail,
+    message: reason || "human intervention required",
     screenshot,
     meta: {
       requires_human: true,
       task,
       step,
       url,
-      human_block: block || undefined,
-      screenshot_path: screenshotPath || undefined,
-      retry_hint: "请完成登录后重新执行同一个任务",
+      human_block: block,
+      screenshot_path: screenshotPath,
     },
   });
 }
@@ -119,7 +109,7 @@ function buildHumanPauseResult({ task, step, url, reason, block, screenshot, scr
 function buildMaxStepsResult({ task, history, maxSteps, lastUrl }) {
   return toResult({
     success: false,
-    exit_code: 124,
+    exit_code: 4,
     message: `max steps reached (${maxSteps})`,
     meta: {
       requires_human: false,
@@ -130,53 +120,36 @@ function buildMaxStepsResult({ task, history, maxSteps, lastUrl }) {
   });
 }
 
+async function cleanupRuntime({ page, browser, keepOpen, keepOpenOnHuman, requiresHuman }) {
+  if (browser && page && requiresHuman && keepOpenOnHuman) {
+    try {
+      await markHumanPauseTab(page);
+    } catch (_err) {
+      // ignore cleanup errors
+    }
+  }
+
+  if (browser && (!requiresHuman || !keepOpenOnHuman) && !keepOpen) {
+    try {
+      await browser.close();
+    } catch (_err) {
+      // ignore cleanup errors
+    }
+  }
+}
+
 function buildAgentFailureResult({ task, history, error, lastUrl }) {
   return toResult({
     success: false,
     exit_code: 1,
-    message: `agent failed: ${normalizeText(error?.message || error)}`,
+    message: normalizeText(error?.message || error || "agent task failed"),
     meta: {
       requires_human: false,
       task,
       steps: history,
-      error: String(error),
       url: lastUrl,
     },
   });
-}
-
-async function cleanupRuntime({ page, browser, keepOpen, keepOpenOnHuman, requiresHuman }) {
-  const shouldKeepOpen = keepOpen || (keepOpenOnHuman && requiresHuman);
-
-  if (page) {
-    if (shouldKeepOpen) {
-      if (requiresHuman) {
-        try {
-          await markHumanPauseTab(page);
-        } catch (_err) {
-          // ignore
-        }
-      }
-    } else {
-      try {
-        await page.close();
-      } catch (_err) {
-        // ignore
-      }
-    }
-  }
-
-  if (browser) {
-    try {
-      if (shouldKeepOpen && typeof browser.disconnect === "function") {
-        await browser.disconnect();
-      } else {
-        await browser.close();
-      }
-    } catch (_err) {
-      // ignore
-    }
-  }
 }
 
 module.exports = {

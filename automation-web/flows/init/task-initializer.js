@@ -3,7 +3,27 @@
 const { generatePlan } = require("../plan/task-planner");
 const { buildSearchUrl, getBrowseUrl } = require("../act/site-config");
 const { connectBrowser, getAutomationPage } = require("./browser");
+const { describeIntent, describeSubtype } = require("../plan/task-analysis");
 const { logProgress } = require("../../shared/utils");
+
+function logTaskAnalysis(progress, taskAnalysis, fallbackTask, label = "=== Task Analysis ===") {
+  if (!taskAnalysis) return;
+
+  logProgress(progress, "");
+  logProgress(progress, label);
+  logProgress(progress, `Intent: ${taskAnalysis.intent} (${describeIntent(taskAnalysis.intent)})`);
+  if (Array.isArray(taskAnalysis.subtypes) && taskAnalysis.subtypes.length > 0) {
+    logProgress(progress, `Subtypes: ${taskAnalysis.subtypes.join(", ")}`);
+  }
+  if (taskAnalysis.primary_subtype) {
+    logProgress(progress, `Primary Subtype: ${taskAnalysis.primary_subtype} (${describeSubtype(taskAnalysis.primary_subtype)})`);
+  }
+  logProgress(progress, `Target Site: ${taskAnalysis.target_site || "unknown"}`);
+  if (taskAnalysis.keywords && taskAnalysis.keywords.length > 0) {
+    logProgress(progress, `Keywords: ${taskAnalysis.keywords.join(", ")}`);
+  }
+  logProgress(progress, `Goal: ${taskAnalysis.goal || fallbackTask}`);
+}
 
 /**
  * Analyze task and generate execution plan
@@ -26,20 +46,9 @@ async function analyzeAndPlan(task, maxSteps, commonSites, progress) {
     executionPlan = planResult.plan;
     taskAnalysis = planResult.analysis;
 
-    // Display task analysis
-    if (taskAnalysis) {
-      logProgress(progress, "");
-      logProgress(progress, "=== Task Analysis ===");
-      logProgress(progress, `Intent: ${taskAnalysis.intent} (${taskAnalysis.intent === "search" ? "明确搜索" : "漫无目的浏览"})`);
-      logProgress(progress, `Target Site: ${taskAnalysis.target_site || "unknown"}`);
-      if (taskAnalysis.keywords && taskAnalysis.keywords.length > 0) {
-        logProgress(progress, `Keywords: ${taskAnalysis.keywords.join(", ")}`);
-      }
-      logProgress(progress, `Goal: ${taskAnalysis.goal || task}`);
-      logProgress(progress, "====================");
-    }
+    logTaskAnalysis(progress, taskAnalysis, task);
+    logProgress(progress, "====================");
 
-    // Display execution plan
     logProgress(progress, "");
     logProgress(progress, "=== Execution Plan ===");
     executionPlan.forEach((step, idx) => {
@@ -50,17 +59,9 @@ async function analyzeAndPlan(task, maxSteps, commonSites, progress) {
     logProgress(progress, "======================");
     logProgress(progress, "");
   } else {
-    // Even if validation failed, try to show raw analysis and plan
     if (planResult.rawPlan?.analysis) {
       taskAnalysis = planResult.rawPlan.analysis;
-      logProgress(progress, "");
-      logProgress(progress, "=== Task Analysis (validation failed, showing raw) ===");
-      logProgress(progress, `Intent: ${taskAnalysis.intent} (${taskAnalysis.intent === "search" ? "明确搜索" : "漫无目的浏览"})`);
-      logProgress(progress, `Target Site: ${taskAnalysis.target_site || "unknown"}`);
-      if (taskAnalysis.keywords && taskAnalysis.keywords.length > 0) {
-        logProgress(progress, `Keywords: ${taskAnalysis.keywords.join(", ")}`);
-      }
-      logProgress(progress, `Goal: ${taskAnalysis.goal || task}`);
+      logTaskAnalysis(progress, taskAnalysis, task, "=== Task Analysis (validation failed, showing raw) ===");
       logProgress(progress, "======================================================");
     }
 

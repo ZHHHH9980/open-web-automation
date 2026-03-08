@@ -69,10 +69,16 @@ function sanitizeCommonDecision(action, obj) {
 
   if (obj.url != null) out.url = String(obj.url);
   if (obj.result != null) out.result = String(obj.result);
+  if (obj.label != null) out.label = String(obj.label);
   if (obj.data && typeof obj.data === "object" && !Array.isArray(obj.data)) out.data = obj.data;
 
+  if (obj.target_id != null && Number.isFinite(Number(obj.target_id))) out.target_id = Math.max(1, Math.floor(Number(obj.target_id)));
   if (obj.wait_ms != null && Number.isFinite(Number(obj.wait_ms))) out.wait_ms = Math.max(0, Math.min(20000, Math.floor(Number(obj.wait_ms))));
   if (obj.max_items != null && Number.isFinite(Number(obj.max_items))) out.max_items = Math.max(1, Math.floor(Number(obj.max_items)));
+  if (obj.author != null) out.author = String(obj.author).trim();
+  if (obj.exact_author != null) out.exact_author = Boolean(obj.exact_author);
+  if (obj.latest_only != null) out.latest_only = Boolean(obj.latest_only);
+  if (obj.capture != null) out.capture = Boolean(obj.capture);
 
   return out;
 }

@@ -11,7 +11,7 @@ async function runApiPlanner(prompt, model, timeoutMs, screenshotB64) {
   const base = String(
     process.env.OWA_AGENT_BASE_URL || process.env.OPENAI_BASE_URL || process.env.OWA_PLANNER_BASE_URL || "https://api.openai.com/v1"
   ).replace(/\/$/, "");
-  const plannerModel = model || process.env.OWA_AGENT_MODEL || process.env.OWA_PLANNER_MODEL || "gpt-4o-mini";
+  const plannerModel = model || process.env.OWA_AGENT_MODEL || process.env.OWA_PLANNER_MODEL || "gpt-5.4";
 
   process.stderr.write(`[agent] using OpenAI backend, model=${plannerModel}\n`);
 

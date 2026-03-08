@@ -110,3 +110,30 @@ test("normalizes Zhihu browse feed items", () => {
   assert.equal(item.detail_url, "https://www.zhihu.com/question/10783732020/answer/2013167499231900461");
   assert.match(item.content_summary, /昨天晚上刚看完的发布会/);
 });
+
+
+test("extracts Zhihu publish time when available", () => {
+  const [item] = normalizeListItems(sampleState, [{
+    type: "search_result",
+    object: {
+      title: "测试标题",
+      updated_time: 1772894170,
+      author: { name: "数字生命卡兹克", url_token: "kazike" },
+      content_items: [{
+        sub_contents: [{
+          object: {
+            id: "2013300633852190741",
+            type: "answer",
+            excerpt: "摘要",
+            url: "https://api.zhihu.com/answers/2013300633852190741",
+            question: { id: "2013291955518404067", title: "问题标题" },
+            author: { name: "数字生命卡兹克", url_token: "kazike" }
+          }
+        }]
+      }]
+    }
+  }]);
+
+  assert.equal(item.publish_time, 1772894170000);
+  assert.equal(item.author_profile_url, "https://www.zhihu.com/people/kazike");
+});

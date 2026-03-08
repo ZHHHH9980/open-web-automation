@@ -70,6 +70,7 @@ test("renders scrape_list entries without empty like rows", () => {
             content_summary: "这是摘要",
             article_content: "这是摘要",
             detail_url: "https://example.com/post",
+            publish_time: 1772769601000,
             likes: 0
           }
         ]
@@ -79,6 +80,7 @@ test("renders scrape_list entries without empty like rows", () => {
 
   assert.match(output, /## 1\. 列表标题/);
   assert.match(output, /- 作者：作者A/);
+  assert.match(output, /- 时间：20\d{2}\/\d{2}\/\d{2} \d{2}:\d{2}/);
   assert.match(output, /- 链接：https:\/\/example\.com\/post/);
   assert.doesNotMatch(output, /- 点赞：/);
   assert.doesNotMatch(output, /### 内容/);

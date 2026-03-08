@@ -110,8 +110,10 @@ OpenClaw 侧通常准备这些字段即可：
 
 ## Adapter 位置
 
-- `adapters/openclaw/index.js`：JS API
+- `adapters/openclaw/index.js`：结果映射与执行入口
+- `adapters/openclaw/handler.js`：可直接放进 openclaw-node 的最小 handler
 - `adapters/openclaw/cli.js`：CLI 入口
+- `adapters/openclaw/openclaw-node-handler.example.js`：示例文件
 
 ## 最小调用示例
 
@@ -153,6 +155,22 @@ function runWebAutomation(prompt) {
     );
   });
 }
+```
+
+## openclaw-node 最小接法
+
+```js
+const { createOpenClawWebAutomationHandler } = require("./adapters/openclaw/handler");
+
+const handleWebAutomation = createOpenClawWebAutomationHandler();
+
+const response = await handleWebAutomation({
+  task_id: "task_123",
+  capability: "web_automation.run",
+  input: {
+    prompt: "去知乎搜索 AI Agent，返回前 5 条结果",
+  },
+});
 ```
 
 ## 建议开工顺序

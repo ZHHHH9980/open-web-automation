@@ -26,3 +26,10 @@ test("uses browse endpoint on Zhihu home page", () => {
   assert.equal(resolved.apiConfig.items_path, "data");
   assert.equal(resolved.apiConfig.item_url_path, "target.url");
 });
+
+test("uses author posts endpoint on Zhihu people posts pages", () => {
+  const resolved = resolveConfiguredApi({ url: "https://www.zhihu.com/people/Khazix/posts" }, "list");
+  assert.equal(resolved.endpoint, "https://www.zhihu.com/api/v4/members/Khazix/articles");
+  assert.equal(resolved.apiConfig.items_path, "data");
+  assert.equal(resolved.apiConfig.item_url_path, "url");
+});
