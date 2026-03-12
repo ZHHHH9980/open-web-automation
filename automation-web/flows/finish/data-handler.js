@@ -2,10 +2,10 @@
 
 const fs = require("fs");
 const { logProgress } = require("../../shared/utils");
-const { generateConclusion } = require("./conclusion-generator");
+const { generateConclusionResult } = require("./conclusion-generator");
 
 function serializeCapturedData(action, data) {
-  if (action === "scrape_list") {
+  if (["scrape_list", "select_list"].includes(action)) {
     const displayItems = Array.isArray(data.display_items) && data.display_items.length > 0
       ? data.display_items
       : (data.items || []);
@@ -69,16 +69,31 @@ function loadCapturedEntries(dataFile) {
 
 async function generateFinalConclusion(dataFile, capturedCount, task, taskAnalysis, model, opts, progress) {
   if (capturedCount === 0 || !fs.existsSync(dataFile)) {
-    return null;
+    return { conclusion: null, generator: null };
   }
 
   logProgress(progress, "generating conclusion from captured data");
   try {
     const extractedData = loadCapturedEntries(dataFile);
-    return await generateConclusion(extractedData, task, model, { taskAnalysis, debugMode: opts.debugMode });
+    const result = await generateConclusionResult(extractedData, task, model, { taskAnalysis, debugMode: opts.debugMode });
+    if (result?.generator?.label) {
+      const detail = result.generator.error ? ` (${result.generator.status}: ${result.generator.error})` : "";
+      logProgress(progress, `conclusion generator: ${result.generator.label}${detail}`);
+    }
+    return result || { conclusion: null, generator: null };
   } catch (err) {
     logProgress(progress, `conclusion generation failed: ${err.message}`);
-    return null;
+    return {
+      conclusion: null,
+      generator: {
+        mode: "model",
+        provider: "openai",
+        model: model || process.env.OWA_AGENT_MODEL || process.env.OWA_PLANNER_MODEL || "gpt-5.4",
+        label: `OpenAI ${model || process.env.OWA_AGENT_MODEL || process.env.OWA_PLANNER_MODEL || "gpt-5.4"}`,
+        status: "failed",
+        error: String(err.message || err),
+      },
+    };
   }
 }
 

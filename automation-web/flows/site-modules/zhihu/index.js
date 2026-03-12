@@ -21,6 +21,8 @@ module.exports = {
   normalizeListItem: runtime.normalizeListItem,
   isUsefulDisplayItem: runtime.isUsefulDisplayItem,
   resolveApiConfigOverride: runtime.resolveApiConfigOverride,
+  canCollectListEntries: runtime.canCollectListEntries,
+  explainListCollectionSupport: runtime.explainListCollectionSupport,
   collectListEntries: runtime.collectListEntries,
   resolveCurrentUserProfile: runtime.resolveCurrentUserProfile,
   resolveCurrentUserPlaceholder: runtime.resolveCurrentUserPlaceholder,

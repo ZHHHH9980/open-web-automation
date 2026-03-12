@@ -292,6 +292,24 @@ function resolveApiConfigOverride(state, apiKind, rawApiConfig) {
   }
 }
 
+function canCollectListEntries(action, state) {
+  const currentUrl = String(state?.url || "");
+  if (!currentUrl) return false;
+
+  if (Boolean(action?.author) && isSearchPageUrl(currentUrl)) {
+    return true;
+  }
+
+  return false;
+}
+
+function explainListCollectionSupport(action, state) {
+  if (canCollectListEntries(action, state)) {
+    return "Zhihu search results may load the list API lazily after scroll, so scrape_list can proceed before the first matching response is captured";
+  }
+  return "";
+}
+
 async function collectListEntries(page, state, context = {}, action = {}, helpers = {}) {
   const { defaultCollector, maxItems, resolveConfiguredApi, getLiveApiResponses, buildStructuredEntries } = helpers;
   if (typeof defaultCollector !== "function"
@@ -460,6 +478,8 @@ module.exports = {
   normalizeListItem,
   isUsefulDisplayItem,
   resolveApiConfigOverride,
+  canCollectListEntries,
+  explainListCollectionSupport,
   collectListEntries,
   resolveCurrentUserProfile,
   resolveCurrentUserPlaceholder,
@@ -473,6 +493,8 @@ module.exports = {
     isSearchPageUrl,
     normalizeAuthorName,
     countAuthorMatches,
+    canCollectListEntries,
+    explainListCollectionSupport,
     buildAuthorDerivedUrl,
     resolveCapturedListPlaceholder,
   },

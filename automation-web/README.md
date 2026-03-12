@@ -136,7 +136,9 @@ CLI 会输出一行 JSON，核心字段如下：
 - 读取 `meta.screenshot_path` 或 `screenshot` 返回登录截图
 - 在有采集结果时读取 `outputs/*.md` 作为完整结果文件
 
-完整说明见 `docs/openclaw-integration.md`。如果你想直接走适配层入口，可以使用 `adapters/openclaw/index.js` 或 `npm run run:openclaw`。
+完整说明见 `docs/openclaw-integration.md`。
+
+如果你想直接走适配层入口，可以使用 `adapters/openclaw/index.js` 或 `npm run run:openclaw`。
 
 ## 常用环境变量
 

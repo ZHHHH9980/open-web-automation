@@ -1,6 +1,14 @@
 # OpenClaw 接入清单
 
-这份清单用于把 `automation-web` 接到 OpenClaw Node 中使用。
+这份清单只描述如何把 `automation-web` 作为 **网页执行 / 搜索能力** 接到 OpenClaw 或其他上层系统。
+
+它关注的是：
+
+- 输入什么任务给执行器
+- 如何读取统一 JSON 结果
+- 如何处理截图、人工介入和结果文件
+
+它不负责描述 Telegram 路由、`/web` 命令分流、异步 ACK、outbound send 等网关编排逻辑；这些内容应放在对应的 gateway / bridge 项目里维护。
 
 ## 这个仓库能直接提供什么
 
@@ -10,9 +18,9 @@
 - 在有采集内容时生成 `outputs/*.md`
 - 在需要人工介入时返回截图和状态信号
 
-## 接入方式
+## 推荐接入方式
 
-推荐由 OpenClaw Node 在本机直接调用 CLI，或者直接调用仓库内的 OpenClaw adapter：
+推荐由 OpenClaw Node 或其他 Node 服务在本机直接调用 CLI，或者直接调用仓库内的 OpenClaw adapter：
 
 ```bash
 cd automation-web
@@ -28,13 +36,13 @@ node adapters/openclaw/cli.js '{"task_id":"task_123","prompt":"去知乎搜索 A
 
 ## 接入 Checklist
 
-- [ ] OpenClaw Node 与浏览器部署在同一台机器
+- [ ] OpenClaw Node 与浏览器部署在同一台机器，或能直接调用本机执行器
 - [ ] 本机 Chrome 已可通过 CDP 连接
 - [ ] `automation-web/config/browser.json` 已初始化
-- [ ] OpenClaw Node 能执行 `node launcher.js "..."`
-- [ ] OpenClaw Node 能读取 `stdout` 最后一行 JSON
-- [ ] OpenClaw Node 能读取本地文件 `outputs/*.md`
-- [ ] OpenClaw Node 能读取本地截图 `meta.screenshot_path`
+- [ ] 上层服务能执行 `node launcher.js "..."`
+- [ ] 上层服务能读取 `stdout` 最后一行 JSON
+- [ ] 上层服务能读取本地文件 `outputs/*.md`
+- [ ] 上层服务能读取本地截图 `meta.screenshot_path`
 - [ ] 上层结果展示已区分成功 / 失败 / 人工介入三种状态
 
 ## 任务输入

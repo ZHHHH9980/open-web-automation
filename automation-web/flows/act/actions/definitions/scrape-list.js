@@ -2,7 +2,11 @@
 
 const { findConfiguredApiResponse, getValueByPath, resolveConfiguredApi } = require("./helpers");
 const { normalizeListItem, isUsefulDisplayItem } = require("./list-normalizers");
-const { collectListEntries: collectSiteListEntries } = require("../../site-adapters");
+const {
+  collectListEntries: collectSiteListEntries,
+  canCollectListEntries: canSiteCollectListEntries,
+  explainListCollectionSupport,
+} = require("../../site-adapters");
 
 function buildStructuredEntries(state, endpoint, itemsPath, apiResponses, maxItems) {
   const matchedResponses = (apiResponses || []).filter((response) => String(response.url || "").startsWith(endpoint));
@@ -103,16 +107,20 @@ module.exports = {
     "Requires prior listen and a site-configured api.list endpoint.",
     "Do not use on sites without api.list in site-config.",
   ],
-  canExecute(_action, state) {
-    return findConfiguredApiResponse(state, "list").ok;
-  },
-  explainCanExecute(_action, state) {
+  canExecute(action, state, context = {}) {
     const matched = findConfiguredApiResponse(state, "list");
-    return matched.ok ? "" : matched.error;
+    if (matched.ok) return true;
+    return canSiteCollectListEntries(action, state, context);
+  },
+  explainCanExecute(action, state, context = {}) {
+    const matched = findConfiguredApiResponse(state, "list");
+    if (matched.ok) return "";
+    const siteExplanation = explainListCollectionSupport(action, state, context);
+    return siteExplanation || matched.error;
   },
   async execute(page, action, state, context = {}) {
     const matched = findConfiguredApiResponse(state, "list");
-    if (!matched.ok) {
+    if (!matched.ok && !canSiteCollectListEntries(action, state, context)) {
       throw new Error(`scrape_list: ${matched.error}`);
     }
 

@@ -37,8 +37,8 @@ function handlePostActionEffects({
     listenHandler.handleApiListener(executionContext, execRet.apiCollector, progress);
   }
 
-  if (["scrape_list", "scrape_detail"].includes(decision.action) && execRet.data) {
-    if (decision.action === "scrape_list") {
+  if (["scrape_list", "select_list", "scrape_detail"].includes(decision.action) && execRet.data) {
+    if (["scrape_list", "select_list"].includes(decision.action)) {
       executionContext.lastListCapture = execRet.data;
     }
 

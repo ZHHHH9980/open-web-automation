@@ -9,6 +9,7 @@ const { renderStructuredItems } = require("./render-capture");
 function saveExtractedContent(result) {
   const extractionFile = result.meta?.extraction_file;
   const conclusion = result.meta?.conclusion;
+  const conclusionGenerator = result.meta?.conclusion_generator || conclusion?.generator || null;
 
   if (!extractionFile && !conclusion) {
     return null;
@@ -27,6 +28,13 @@ function saveExtractedContent(result) {
       sections.push("", "## 相关链接", "");
       conclusion.links.forEach((link) => sections.push(`- ${normalizeInlineText(link)}`));
     }
+  }
+
+  if (conclusionGenerator?.label) {
+    const generatorLine = conclusionGenerator.error
+      ? `${conclusionGenerator.label} (${normalizeInlineText(conclusionGenerator.status || "failed")}: ${normalizeInlineText(conclusionGenerator.error)})`
+      : normalizeInlineText(conclusionGenerator.label);
+    sections.push("", "## 总结来源", "", `- ${generatorLine}`);
   }
 
   if (extractionFile && fs.existsSync(extractionFile)) {

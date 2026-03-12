@@ -32,6 +32,8 @@ function mergeSubtypes(values) {
   return Array.from(new Set((values || []).filter(Boolean)));
 }
 
+const AUTHOR_SELECTION_POOL_SIZE = 50;
+
 function extractZhihuAuthorIntent(task, analysis) {
   const targetSite = String(analysis?.target_site || "").trim();
   if (targetSite !== "zhihu.com") {
@@ -102,15 +104,22 @@ function buildZhihuAuthorLatestPlan(intent) {
     {
       step: 5,
       action: "scrape_list",
-      max_items: intent.maxItems,
+      max_items: Math.max(AUTHOR_SELECTION_POOL_SIZE, intent.maxItems || 1),
       latest_only: true,
-      reason: "从作者文章列表接口中按发布时间返回最新内容",
+      capture: false,
+      reason: "先抓取作者文章列表候选，并按发布时间排序供后续选择",
     },
     {
       step: 6,
+      action: "select_list",
+      selection_query: intent.selectionQuery,
+      reason: "根据用户原始请求，从作者文章列表中选择目标内容",
+    },
+    {
+      step: 7,
       action: "done",
-      result: `已获取作者“${intent.author}”的最新知乎文章`,
-      reason: "作者主页文章列表已抓取完成",
+      result: `已获取作者“${intent.author}”的知乎文章并完成选择`,
+      reason: "作者主页文章列表已抓取并完成目标选择",
     },
   ];
 }
@@ -126,12 +135,12 @@ function apply(task, analysis, plan) {
     analysis: {
       ...(analysis || {}),
       keywords: [intent.author],
-      goal: `在知乎定位作者“${intent.author}”，进入其文章页并返回最新发布内容`,
+      goal: `在知乎定位作者“${intent.author}”，进入其文章页并从文章列表中选择符合请求的内容`,
       subtypes: mergeSubtypes([...(analysis?.subtypes || []), "entity_lookup", "latest_content_fetch", "content_understanding"]),
       task_types: mergeSubtypes([...(analysis?.subtypes || []), "entity_lookup", "latest_content_fetch", "content_understanding"]),
       primary_subtype: "latest_content_fetch",
     },
-    plan: buildZhihuAuthorLatestPlan(intent),
+    plan: buildZhihuAuthorLatestPlan({ ...intent, selectionQuery: normalizeWhitespace(task) }),
   };
 }
 

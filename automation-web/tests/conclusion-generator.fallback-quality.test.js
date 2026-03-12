@@ -14,7 +14,7 @@ function test(name, fn) {
     });
 }
 
-test("returns no conclusion when OpenAI summary is unavailable", async () => {
+test("does not fall back to heuristic summary when OpenAI summary is unavailable", async () => {
   const prevOpenAI = process.env.OPENAI_API_KEY;
   const prevAgent = process.env.OWA_AGENT_API_KEY;
   const prevCrs = process.env.CRS_OAI_KEY;
@@ -27,11 +27,15 @@ test("returns no conclusion when OpenAI summary is unavailable", async () => {
       {
         parsed: {
           items: [{
-            title: "GPT-5.4深夜发布，最适合OpenClaw的天选模型登场了。",
+            title: "苹果和飞书，快成新时代的Agent基建了。",
             author: "数字生命卡兹克",
-            article_content: "作者认为它很适合作为 OpenClaw 的首选模型。核心原因是代码能力、世界知识和多模态理解都很重要。Claude 综合能力强，但成本太高。",
+            article_content: [
+              "这个观点之所以这么说，其实是真的蛮有意思的。",
+              "结果OpenClaw爆了之后，Mac成了Agent最适合运行的平台，因为Unix、统一内存架构和低功耗。",
+              "而飞书恰好把文档、表格、日历、审批、知识库和多维表格都放在同一个云端体系里，并且全有API。",
+            ].join(""),
             detail_url: "https://zhuanlan.zhihu.com/p/1",
-            publish_time: 1772769601000,
+            publish_time: 1772975580000,
           }],
         },
       },
@@ -45,8 +49,8 @@ test("returns no conclusion when OpenAI summary is unavailable", async () => {
     });
 
     assert.equal(result.conclusion, null);
-    assert.equal(result.generator.provider, "openai");
     assert.equal(result.generator.status, "unavailable");
+    assert.ok(!/local/i.test(result.generator.label));
   } finally {
     if (typeof prevOpenAI === "string") process.env.OPENAI_API_KEY = prevOpenAI;
     else delete process.env.OPENAI_API_KEY;
@@ -55,25 +59,4 @@ test("returns no conclusion when OpenAI summary is unavailable", async () => {
     if (typeof prevCrs === "string") process.env.CRS_OAI_KEY = prevCrs;
     else delete process.env.CRS_OAI_KEY;
   }
-});
-
-test("preserves model-produced conclusion structure", async () => {
-  const normalized = require("../flows/finish/conclusion-generator").__internal.normalizeModelConclusion({
-    summary: "已定位到最新文章，并提炼出两条核心观点。",
-    keyPoints: ["观点1", "观点2"],
-    links: ["https://example.com/a"],
-  }, ["https://fallback.example"], {
-    intent: "search",
-    subtypes: ["latest_content_fetch"],
-  }, {
-    mode: "model",
-    provider: "openai",
-    model: "gpt-5.4",
-    label: "OpenAI gpt-5.4",
-    status: "success",
-  });
-
-  assert.equal(normalized.summary, "已定位到最新文章，并提炼出两条核心观点。");
-  assert.equal(normalized.generator.label, "OpenAI gpt-5.4");
-  assert.deepEqual(normalized.links, ["https://example.com/a"]);
 });

@@ -31,11 +31,13 @@ test("extracts Zhihu author intent from latest article task", () => {
 });
 
 test("builds author latest plan via zhihu adapter", () => {
-  const plan = buildZhihuAuthorLatestPlan({ author: "数字生命卡兹克", latestOnly: true, maxItems: 1 });
-  assert.equal(plan.length, 6);
+  const plan = buildZhihuAuthorLatestPlan({ author: "数字生命卡兹克", latestOnly: true, maxItems: 1, selectionQuery: "去知乎看看数字生命卡兹克最新第二篇文章" });
+  assert.equal(plan.length, 7);
   assert.equal(plan[1].url, "https://www.zhihu.com/search?q=%E6%95%B0%E5%AD%97%E7%94%9F%E5%91%BD%E5%8D%A1%E5%85%B9%E5%85%8B");
   assert.equal(plan[3].url, "{{item_1_author_posts_url}}");
   assert.equal(plan[2].capture, false);
+  assert.equal(plan[4].capture, false);
+  assert.equal(plan[5].action, "select_list");
 });
 
 test("site adapter registry applies zhihu author flow", () => {
@@ -60,4 +62,5 @@ test("site adapter registry applies zhihu author flow", () => {
   assert.deepEqual(patched.analysis.subtypes, ["entity_lookup", "latest_content_fetch", "content_understanding"]);
   assert.equal(patched.analysis.primary_subtype, "latest_content_fetch");
   assert.equal(patched.plan[3].url, "{{item_1_author_posts_url}}");
+  assert.equal(patched.plan[5].action, "select_list");
 });

@@ -7,7 +7,7 @@ const { data: dataHandler } = require("../act/actions");
 
 async function finalizeCompletedTask({ page, task, taskAnalysis, execRet, history, extractedCount, extractionFile, model, opts, progress }) {
   const finalUrl = page.url();
-  const conclusion = await dataHandler.generateFinalConclusion(
+  const conclusionResult = await dataHandler.generateFinalConclusion(
     extractionFile,
     extractedCount,
     task,
@@ -16,6 +16,8 @@ async function finalizeCompletedTask({ page, task, taskAnalysis, execRet, histor
     opts,
     progress,
   );
+  const conclusion = conclusionResult?.conclusion || null;
+  const conclusionGenerator = conclusionResult?.generator || conclusion?.generator || null;
 
   const extractDom = process.env.OWA_EXTRACT_DOM === "1" || opts.extractDom;
   const domData = await dataHandler.extractDomData(page, extractDom, progress);
@@ -33,6 +35,7 @@ async function finalizeCompletedTask({ page, task, taskAnalysis, execRet, histor
       extracted_count: extractedCount,
       extraction_file: extractedCount > 0 ? extractionFile : null,
       conclusion,
+      conclusion_generator: conclusionGenerator,
       url: finalUrl,
       dom_data: extractDom ? domData : undefined,
     },

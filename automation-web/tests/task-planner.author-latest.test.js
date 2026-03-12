@@ -34,7 +34,8 @@ test("task planner delegates author-latest rewriting to site adapters", () => {
   );
 
   assert.equal(patched.applied_by, "zhihu-author-latest");
-  assert.equal(patched.plan.length, 6);
+  assert.equal(patched.plan.length, 7);
+  assert.equal(patched.plan[5].action, "select_list");
   assert.deepEqual(patched.analysis.subtypes, ["entity_lookup", "latest_content_fetch", "content_understanding"]);
   assert.equal(patched.analysis.primary_subtype, "latest_content_fetch");
 });

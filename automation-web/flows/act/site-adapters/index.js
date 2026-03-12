@@ -82,6 +82,22 @@ async function collectListEntries(page, state, context = {}, action = {}, helper
   return { entries: [], endpoint: "", itemsPath: "" };
 }
 
+function canCollectListEntries(action, state, context = {}) {
+  const siteModule = getSiteModule(state?.url || "");
+  if (siteModule && typeof siteModule.canCollectListEntries === "function") {
+    return Boolean(siteModule.canCollectListEntries(action, state, context));
+  }
+  return false;
+}
+
+function explainListCollectionSupport(action, state, context = {}) {
+  const siteModule = getSiteModule(state?.url || "");
+  if (siteModule && typeof siteModule.explainListCollectionSupport === "function") {
+    return String(siteModule.explainListCollectionSupport(action, state, context) || "").trim();
+  }
+  return "";
+}
+
 module.exports = {
   getSiteModule,
   normalizeListItem,
@@ -94,6 +110,8 @@ module.exports = {
   explainClickSupport,
   executePlatformClick,
   collectListEntries,
+  canCollectListEntries,
+  explainListCollectionSupport,
   zhihu,
   xiaohongshu,
 };

@@ -85,6 +85,7 @@ async function runAgentTask(rawTask, opts = {}) {
   const taskId = normalizeText(opts.taskId) || generateTaskId();
   const extractionFile = getExtractionFilePath(taskId);
   const executionContext = {
+    task,
     startApiCollection,
     apiCollectors: [],
     currentApiCollector: null,

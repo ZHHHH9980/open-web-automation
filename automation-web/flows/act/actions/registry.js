@@ -6,6 +6,7 @@ const definitions = [
   require("./definitions/wait"),
   require("./definitions/listen"),
   require("./definitions/scrape-list"),
+  require("./definitions/select-list"),
   require("./definitions/scrape-detail"),
   require("./definitions/back"),
   require("./definitions/done"),
@@ -78,6 +79,7 @@ function sanitizeCommonDecision(action, obj) {
   if (obj.author != null) out.author = String(obj.author).trim();
   if (obj.exact_author != null) out.exact_author = Boolean(obj.exact_author);
   if (obj.latest_only != null) out.latest_only = Boolean(obj.latest_only);
+  if (obj.selection_query != null) out.selection_query = String(obj.selection_query).trim();
   if (obj.capture != null) out.capture = Boolean(obj.capture);
 
   return out;
